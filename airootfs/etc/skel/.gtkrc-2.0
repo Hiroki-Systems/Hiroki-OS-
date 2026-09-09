@@ -1,0 +1,8 @@
+gtk-theme-name="Hiroki-Dark"
+gtk-icon-theme-name="Hiroki-Icons"
+gtk-font-name="Inter 10"
+gtk-cursor-theme-name="Bibata-Modern-Classic"
+gtk-cursor-theme-size=24
+gtk-toolbar-style=GTK_TOOLBAR_BOTH_HORIZ
+gtk-button-images=1
+gtk-menu-images=1

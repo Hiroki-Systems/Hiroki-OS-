@@ -1,0 +1,2 @@
+# Hiroki OS - Live user sudo
+live ALL=(ALL) NOPASSWD: ALL

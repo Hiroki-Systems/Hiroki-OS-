@@ -1,0 +1,58 @@
+# Linis kullanıcı yapılandırması — ~/.config/linis/ içine kopyalayın
+#
+# Kurulum:
+#   mkdir -p ~/.config/linis
+#   cp /etc/xdg/linis/config.toml ~/.config/linis/config.toml
+#   cp /usr/share/linis/themes/tokyo-night.toml ~/.config/linis/theme.toml
+#   cp /usr/share/linis/keybinds.conf ~/.config/linis/keybinds.conf
+#   cp /usr/share/linis/autostart ~/.config/linis/autostart
+
+[colors]
+bg_dark        = "#1a1b26"
+bg_mid         = "#24283b"
+bg_light       = "#414868"
+fg_primary     = "#c0caf5"
+fg_dim         = "#565f89"
+accent_blue    = "#7aa2f7"
+accent_purple  = "#bb9af7"
+accent_cyan    = "#7dcfff"
+accent_green   = "#9ece6a"
+accent_red     = "#f7768e"
+accent_orange  = "#e0af68"
+border_active  = "#7aa2f7"
+border_normal  = "#24283b"
+
+[compositor]
+shadow_radius        = 12
+shadow_opacity       = 0.30
+blur_radius          = 8
+corner_radius        = 10
+inactive_opacity     = 0.92
+animation_duration_ms = 300
+animations           = true
+blur                 = true
+
+[panel_left]
+width   = 48
+opacity = 0.88
+blur    = true
+
+[panel_bottom]
+height  = 32
+opacity = 0.88
+blur    = true
+
+[gaps]
+outer = 6
+inner = 6
+
+[wm]
+workspaces   = 4
+master_ratio = 45
+terminal     = "xfce4-terminal"
+file_manager = "thunar"
+launcher     = "linis-launch"
+
+[video]
+dir          = "/usr/share/linis/videos"   # açılış videosu klasörü
+duration_sec = 12                          # intro üst sınırı (sn)

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Hiroki OS - Display Manager (Wayland)
+# Root olarak çalışır, live kullanıcısı olarak Wayland session başlatır.
+set -euo pipefail
+
+SESSION="kde"
+[[ -r /etc/hiroki/selected-de ]] && SESSION=$(tr -d '[:space:]' < /etc/hiroki/selected-de)
+
+case "$SESSION" in
+    kde|plasma)  CMD="startplasma-wayland" ;;
+    lxqt)        CMD="startlxqt" ;;
+    *)           CMD="startplasma-wayland" ;;
+esac
+
+# Oturum kullanıcısı
+USER_NAME="live"
+UID_NUM=$(id -u "$USER_NAME" 2>/dev/null || echo 1000)
+
+# XDG_RUNTIME_DIR
+export XDG_RUNTIME_DIR="/run/user/${UID_NUM}"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+# Wayland session baslat
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=KDE
+export GDK_DISABLE_SANDBOXED_LOADER=1
+
+echo "[hiroki-dm] Starting $CMD for $USER_NAME"
+
+# PipeWire / systemd user servisleri
+su - "$USER_NAME" -c "
+    export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
+    export XDG_SESSION_TYPE=wayland
+    export XDG_SESSION_DESKTOP=KDE
+    export GDK_DISABLE_SANDBOXED_LOADER=1
+    systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+    exec dbus-run-session -- $CMD
+" &
+DM_PID=$!
+wait $DM_PID

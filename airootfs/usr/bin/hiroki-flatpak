@@ -1,0 +1,1026 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Hiroki OS - Uygulama Magazasi (Flatpak App Store)"""
+
+import sys
+import subprocess
+import shutil
+import json
+import os
+from pathlib import Path
+
+from PyQt6.QtCore import (
+    Qt, QThread, pyqtSignal, QSize, QTimer, QPropertyAnimation,
+    QEasingCurve, QPoint, QRect
+)
+from PyQt6.QtGui import (
+    QFont, QColor, QPalette, QIcon, QPixmap, QPainter,
+    QLinearGradient, QBrush, QPen, QFontDatabase, QAction
+)
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QComboBox, QGridLayout,
+    QScrollArea, QFrame, QProgressBar, QMessageBox, QSizePolicy,
+    QSpacerItem, QToolButton, QGraphicsDropShadowEffect,
+    QStackedWidget, QSplashScreen, QDialog, QTabWidget,
+    QSystemTrayIcon, QMenu
+)
+
+ACCENT = "#d34188"
+ACCENT_HOVER = "#e05599"
+ACCENT_PRESSED = "#b83675"
+BG_DARK = "#111111"
+BG_CARD = "#1a1a1a"
+BG_CARD_HOVER = "#222222"
+BG_INPUT = "#1e1e1e"
+BG_HEADER = "#0d0d0d"
+TEXT_PRIMARY = "#ffffff"
+TEXT_SECONDARY = "#aaaaaa"
+TEXT_DIM = "#666666"
+BORDER_COLOR = "#2a2a2a"
+SUCCESS_COLOR = "#4caf50"
+ERROR_COLOR = "#f44336"
+WARNING_COLOR = "#ff9800"
+SCROLLBAR_BG = "#1a1a1a"
+SCROLLBAR_HANDLE = "#333333"
+
+CATEGORIES = {
+    "Tum": "",
+    "Tarayicilar": "web-browsers",
+    "Ofis": "office",
+    "Medya": "audio-video",
+    "Gelistirme": "development",
+    "Oyun": "games",
+    "Sistem": "system",
+}
+
+FLATPAK_CATEGORIES_MAP = {
+    "Tum": "",
+    "Tarayicilar": "Web Browsers",
+    "Ofis": "Office",
+    "Medya": "Audio & Video",
+    "Gelistirme": "Development",
+    "Oyun": "Games",
+    "Sistem": "System",
+}
+
+STYLE_SHEET = f"""
+QMainWindow {{
+    background-color: {BG_DARK};
+}}
+QWidget {{
+    color: {TEXT_PRIMARY};
+    font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+}}
+QScrollArea {{
+    border: none;
+    background-color: {BG_DARK};
+}}
+QScrollBar:vertical {{
+    background: {SCROLLBAR_BG};
+    width: 8px;
+    margin: 0;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical {{
+    background: {SCROLLBAR_HANDLE};
+    min-height: 30px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {ACCENT};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QScrollBar:horizontal {{
+    background: {SCROLLBAR_BG};
+    height: 8px;
+    margin: 0;
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {SCROLLBAR_HANDLE};
+    min-width: 30px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {ACCENT};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0;
+}}
+QLineEdit {{
+    background-color: {BG_INPUT};
+    border: 2px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    color: {TEXT_PRIMARY};
+    selection-background-color: {ACCENT};
+}}
+QLineEdit:focus {{
+    border-color: {ACCENT};
+}}
+QLineEdit::placeholder {{
+    color: {TEXT_DIM};
+}}
+QComboBox {{
+    background-color: {BG_INPUT};
+    border: 2px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    color: {TEXT_PRIMARY};
+    min-width: 160px;
+}}
+QComboBox:hover {{
+    border-color: {ACCENT};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 30px;
+}}
+QComboBox::down-arrow {{
+    image: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid {TEXT_SECONDARY};
+    margin-right: 10px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {BG_CARD};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 4px;
+    selection-background-color: {ACCENT};
+    selection-color: {TEXT_PRIMARY};
+    outline: none;
+}}
+QProgressBar {{
+    background-color: {BG_INPUT};
+    border: none;
+    border-radius: 4px;
+    height: 6px;
+    text-align: center;
+    color: transparent;
+}}
+QProgressBar::chunk {{
+    background-color: {ACCENT};
+    border-radius: 4px;
+}}
+QToolTip {{
+    background-color: {BG_CARD};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+}}
+"""
+
+
+class FlatpakWorker(QThread):
+    """Background worker for flatpak operations."""
+
+    finished = pyqtSignal(str, object)
+    progress = pyqtSignal(int, str)
+    error = pyqtSignal(str)
+
+    def __init__(self, operation, *args, **kwargs):
+        super().__init__()
+        self.operation = operation
+        self.args = args
+        self.kwargs = kwargs
+        self._cancelled = False
+
+    def run(self):
+        try:
+            if self.operation == "search":
+                self._do_search()
+            elif self.operation == "install":
+                self._do_install()
+            elif self.operation == "uninstall":
+                self._do_uninstall()
+            elif self.operation == "list_installed":
+                self._do_list_installed()
+            elif self.operation == "list_remotes":
+                self._do_list_remotes()
+            elif self.operation == "info":
+                self._do_info()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _do_search(self):
+        query, category = self.args
+        self.progress.emit(10, "Aramaniyor...")
+        if not query and not category:
+            self.finished.emit("search", [])
+            return
+
+        cmd = ["flatpak", "search", "--columns=application,description,version,remotes"]
+        if category:
+            cat_name = FLATPAK_CATEGORIES_MAP.get(category, "")
+            if cat_name:
+                cmd.extend(["--categories", cat_name])
+        if query:
+            cmd.append(query)
+
+        self.progress.emit(30, "Flatpak araniyor...")
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30
+        )
+        self.progress.emit(70, "Sonuclar isleniyor...")
+
+        apps = []
+        if result.returncode == 0 and result.stdout.strip():
+            lines = result.stdout.strip().split("\n")
+            for line in lines[1:]:
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    app_id = parts[0].strip()
+                    desc = parts[1].strip() if len(parts) > 1 else ""
+                    ver = parts[2].strip() if len(parts) > 2 else ""
+                    remote = parts[3].strip() if len(parts) > 3 else "flathub"
+                    apps.append({
+                        "id": app_id,
+                        "name": app_id.split(".")[-1].replace("-", " ").title(),
+                        "description": desc,
+                        "version": ver,
+                        "remote": remote,
+                    })
+
+        self.progress.emit(100, "Tamamlandi")
+        self.finished.emit("search", apps)
+
+    def _do_install(self):
+        app_id = self.args[0]
+        self.progress.emit(5, f"{app_id} kuruluyor...")
+        process = subprocess.Popen(
+            ["flatpak", "install", "-y", "--noninteractive", app_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        output_lines = []
+        pct = 10
+        for line in iter(process.stdout.readline, ""):
+            if self._cancelled:
+                process.kill()
+                self.error.emit("Kurulum iptal edildi.")
+                return
+            output_lines.append(line.strip())
+            low = line.lower()
+            if "installing" in low or "downloading" in low:
+                pct = min(pct + 5, 85)
+                self.progress.emit(pct, "Indiriliyor / Kuruluyor...")
+            elif "processing" in low:
+                pct = min(pct + 3, 90)
+                self.progress.emit(pct, "Isleniyor...")
+            elif "complete" in low or "installed" in low:
+                pct = 95
+                self.progress.emit(pct, "Tamamlaniyor...")
+
+        process.wait()
+        if process.returncode == 0:
+            self.progress.emit(100, "Kurulum tamamlandi!")
+            self.finished.emit("install", {"success": True, "id": app_id})
+        else:
+            err_text = "\n".join(output_lines[-5:]) if output_lines else "Bilinmeyen hata"
+            self.finished.emit("install", {
+                "success": False,
+                "id": app_id,
+                "error": err_text
+            })
+
+    def _do_uninstall(self):
+        app_id = self.args[0]
+        self.progress.emit(20, f"{app_id} kaldiriliyor...")
+        result = subprocess.run(
+            ["flatpak", "uninstall", "-y", "--noninteractive", app_id],
+            capture_output=True, text=True, timeout=60
+        )
+        self.progress.emit(100, "Kaldirma tamamlandi!")
+        self.finished.emit("uninstall", {
+            "success": result.returncode == 0,
+            "id": app_id,
+            "error": result.stderr if result.returncode != 0 else ""
+        })
+
+    def _do_list_installed(self):
+        self.progress.emit(20, "Kurulu uygulamalar aliniyor...")
+        result = subprocess.run(
+            ["flatpak", "list", "--columns=application,name,version,origin"],
+            capture_output=True, text=True, timeout=15
+        )
+        apps = {}
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split("\n")[1:]:
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    app_id = parts[0].strip()
+                    name = parts[1].strip() if len(parts) > 1 else app_id
+                    ver = parts[2].strip() if len(parts) > 2 else ""
+                    origin = parts[3].strip() if len(parts) > 3 else ""
+                    apps[app_id] = {
+                        "name": name,
+                        "version": ver,
+                        "origin": origin,
+                    }
+        self.progress.emit(100, "Tamamlandi")
+        self.finished.emit("list_installed", apps)
+
+    def _do_list_remotes(self):
+        result = subprocess.run(
+            ["flatpak", "remotes", "--columns=name"],
+            capture_output=True, text=True, timeout=10
+        )
+        remotes = []
+        if result.returncode == 0:
+            remotes = [r.strip() for r in result.stdout.strip().split("\n") if r.strip()]
+        self.finished.emit("list_remotes", remotes)
+
+    def _do_info(self):
+        app_id = self.args[0]
+        result = subprocess.run(
+            ["flatpak", "info", app_id],
+            capture_output=True, text=True, timeout=10
+        )
+        info = {}
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    info[key.strip()] = val.strip()
+        self.finished.emit("info", info)
+
+    def cancel(self):
+        self._cancelled = True
+
+
+class AppCard(QFrame):
+    """A card widget representing a Flatpak application."""
+
+    install_requested = pyqtSignal(str)
+    uninstall_requested = pyqtSignal(str)
+
+    def __init__(self, app_data, is_installed=False, parent=None):
+        super().__init__(parent)
+        self.app_data = app_data
+        self.is_installed = is_installed
+        self._setup_ui()
+        self._apply_style()
+
+    def _setup_ui(self):
+        self.setFixedHeight(160)
+        self.setMinimumWidth(220)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(14)
+
+        icon_label = QLabel()
+        icon_label.setFixedSize(56, 56)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_default_icon(icon_label)
+        layout.addWidget(icon_label)
+
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+
+        name_label = QLabel(self.app_data.get("name", self.app_data.get("id", "Bilinmeyen")))
+        name_label.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        name_label.setStyleSheet(f"color: {TEXT_PRIMARY};")
+        name_label.setWordWrap(True)
+        info_layout.addWidget(name_label)
+
+        id_label = QLabel(self.app_data.get("id", ""))
+        id_label.setFont(QFont("Consolas", 9))
+        id_label.setStyleSheet(f"color: {TEXT_DIM};")
+        id_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        info_layout.addWidget(id_label)
+
+        desc = self.app_data.get("description", "Aciklama mevcut degil.")
+        if len(desc) > 100:
+            desc = desc[:97] + "..."
+        desc_label = QLabel(desc)
+        desc_label.setFont(QFont("Segoe UI", 10))
+        desc_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        desc_label.setWordWrap(True)
+        info_layout.addWidget(desc_label)
+
+        ver = self.app_data.get("version", "")
+        if ver:
+            ver_label = QLabel(f"Surum: {ver}")
+            ver_label.setFont(QFont("Segoe UI", 9))
+            ver_label.setStyleSheet(f"color: {TEXT_DIM};")
+            info_layout.addWidget(ver_label)
+
+        info_layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        self.action_btn = QPushButton()
+        self.action_btn.setFixedHeight(34)
+        self.action_btn.setMinimumWidth(100)
+        self.action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.action_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self._update_button()
+        btn_layout.addWidget(self.action_btn)
+
+        info_layout.addLayout(btn_layout)
+        layout.addLayout(info_layout, 1)
+
+    def _set_default_icon(self, label):
+        pixmap = QPixmap(56, 56)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        gradient = QLinearGradient(0, 0, 56, 56)
+        gradient.setColorAt(0, QColor(ACCENT))
+        gradient.setColorAt(1, QColor("#8b2060"))
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, 56, 56, 14, 14)
+        painter.setPen(QPen(QColor(TEXT_PRIMARY)))
+        font = QFont("Segoe UI", 20, QFont.Weight.Bold)
+        painter.setFont(font)
+        first_char = self.app_data.get("name", self.app_data.get("id", "?"))[0].upper()
+        painter.drawText(QRect(0, 0, 56, 56), Qt.AlignmentFlag.AlignCenter, first_char)
+        painter.end()
+        label.setPixmap(pixmap)
+
+    def _update_button(self):
+        if self.is_installed:
+            self.action_btn.setText("Kaldir")
+            self.action_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {ERROR_COLOR};
+                    border: 2px solid {ERROR_COLOR};
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ERROR_COLOR};
+                    color: {TEXT_PRIMARY};
+                }}
+            """)
+            self.action_btn.clicked.disconnect() if self.action_btn.receivers(
+                self.action_btn.clicked
+            ) > 0 else None
+            try:
+                self.action_btn.clicked.disconnect()
+            except TypeError:
+                pass
+            self.action_btn.clicked.connect(
+                lambda: self.uninstall_requested.emit(self.app_data["id"])
+            )
+        else:
+            self.action_btn.setText("Kur")
+            self.action_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ACCENT};
+                    color: {TEXT_PRIMARY};
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ACCENT_HOVER};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ACCENT_PRESSED};
+                }}
+            """)
+            try:
+                self.action_btn.clicked.disconnect()
+            except TypeError:
+                pass
+            self.action_btn.clicked.connect(
+                lambda: self.install_requested.emit(self.app_data["id"])
+            )
+
+    def _apply_style(self):
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 12px;
+            }}
+            QFrame:hover {{
+                background-color: {BG_CARD_HOVER};
+                border-color: {ACCENT};
+            }}
+        """)
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        self.setGraphicsEffect(shadow)
+
+    def set_installed(self, installed):
+        self.is_installed = installed
+        self._update_button()
+
+
+class FlatpakThread(QThread):
+    """Generic thread wrapper for long operations."""
+
+    def __init__(self, func, *args, **kwargs):
+        super().__init__()
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.result = None
+
+    def run(self):
+        self.result = self.func(*self.args, **self.kwargs)
+
+
+class MainWindow(QMainWindow):
+    """Main application window."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Uygulama Magazasi")
+        self.setMinimumSize(800, 600)
+        self.resize(1024, 720)
+        self.workers = []
+        self.installed_apps = {}
+        self.current_apps = []
+        self.current_category = "Tum"
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self._perform_search)
+        self._setup_ui()
+        self._check_flatpak()
+        self._load_installed()
+
+    def _check_flatpak(self):
+        if not shutil.which("flatpak"):
+            self.stacked.setCurrentIndex(1)
+        else:
+            self.stacked.setCurrentIndex(0)
+
+    def _setup_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        self.stacked = QStackedWidget()
+        main_layout.addWidget(self.stacked)
+
+        self._build_main_page()
+        self._build_no_flatpak_page()
+
+    def _build_no_flatpak_page(self):
+        page = QWidget()
+        page.setStyleSheet(f"background-color: {BG_DARK};")
+        layout = QVBoxLayout(page)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon_lbl = QLabel("📦")
+        icon_lbl.setFont(QFont("Segoe UI", 64))
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_lbl)
+
+        title = QLabel("Flatpak bulunamadi")
+        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {ERROR_COLOR};")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "Hiroki OS Uygulama Magazasi'nin calismasi icin Flatpak yuklu olmalidir.\n\n"
+            "Lutfen asagidaki komutu calistirarak Flatpak'i yukleyin:\n\n"
+            "sudo pacman -S flatpak"
+        )
+        desc.setFont(QFont("Segoe UI", 13))
+        desc.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 20px;")
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        retry_btn = QPushButton("Tekrar Dene")
+        retry_btn.setFixedSize(200, 48)
+        retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        retry_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        retry_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT};
+                color: {TEXT_PRIMARY};
+                border: none;
+                border-radius: 8px;
+                margin-top: 20px;
+            }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
+            QPushButton:pressed {{ background-color: {ACCENT_PRESSED}; }}
+        """)
+        retry_btn.clicked.connect(self._check_flatpak)
+        layout.addWidget(retry_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.stacked.addWidget(page)
+
+    def _build_main_page(self):
+        page = QWidget()
+        page.setStyleSheet(f"background-color: {BG_DARK};")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = self._build_header()
+        layout.addWidget(header)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: transparent;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}, stop:1 #ff6eb4
+                );
+                border-radius: 0px;
+            }}
+        """)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setFont(QFont("Segoe UI", 10))
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 4px 20px;")
+        self.status_label.hide()
+        layout.addWidget(self.status_label)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"QScrollArea {{ background-color: {BG_DARK}; border: none; }}")
+
+        self.grid_container = QWidget()
+        self.grid_container.setStyleSheet(f"background-color: {BG_DARK};")
+        self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_layout.setContentsMargins(20, 16, 20, 20)
+        self.grid_layout.setSpacing(14)
+
+        self.empty_label = QLabel("Uygulama bulunamadi.\nArama yapin veya kategori secin.")
+        self.empty_label.setFont(QFont("Segoe UI", 14))
+        self.empty_label.setStyleSheet(f"color: {TEXT_DIM}; padding: 60px;")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.hide()
+        self.grid_layout.addWidget(self.empty_label, 0, 0, 1, -1)
+
+        scroll.setWidget(self.grid_container)
+        layout.addWidget(scroll, 1)
+
+        self.stacked.addWidget(page)
+
+    def _build_header(self):
+        header = QWidget()
+        header.setFixedHeight(130)
+        header.setStyleSheet(f"""
+            QWidget {{
+                background-color: {BG_HEADER};
+                border-bottom: 1px solid {BORDER_COLOR};
+            }}
+        """)
+        layout = QVBoxLayout(header)
+        layout.setContentsMargins(24, 12, 24, 12)
+        layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(16)
+
+        title = QLabel("Uygulama Magazasi")
+        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {ACCENT}; background: transparent; border: none;")
+        top_row.addWidget(title)
+
+        top_row.addStretch()
+
+        installed_btn = QPushButton("Kurulu Uygulamalar")
+        installed_btn.setFixedHeight(38)
+        installed_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        installed_btn.setFont(QFont("Segoe UI", 10))
+        installed_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{
+                color: {ACCENT};
+                border-color: {ACCENT};
+            }}
+        """)
+        installed_btn.clicked.connect(self._show_installed)
+        top_row.addWidget(installed_btn)
+
+        refresh_btn = QPushButton("Yenile")
+        refresh_btn.setFixedHeight(38)
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setFont(QFont("Segoe UI", 10))
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{
+                color: {ACCENT};
+                border-color: {ACCENT};
+            }}
+        """)
+        refresh_btn.clicked.connect(self._refresh_all)
+        top_row.addWidget(refresh_btn)
+
+        layout.addLayout(top_row)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(12)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Uygulama ara... (ornek: firefox, gimp, vlc)")
+        self.search_input.setMinimumWidth(300)
+        self.search_input.setFixedHeight(40)
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.returnPressed.connect(self._perform_search)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        search_row.addWidget(self.search_input, 1)
+
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(CATEGORIES.keys())
+        self.category_combo.setFixedHeight(40)
+        self.category_combo.currentTextChanged.connect(self._on_category_changed)
+        search_row.addWidget(self.category_combo)
+
+        layout.addLayout(search_row)
+
+        return header
+
+    def _on_search_text_changed(self, text):
+        self.search_timer.start(400)
+
+    def _on_category_changed(self, category):
+        self.current_category = category
+        self._perform_search()
+
+    def _perform_search(self):
+        query = self.search_input.text().strip()
+        category = self.current_category
+        self._show_progress(True, "Arananiyor...")
+        worker = FlatpakWorker("search", query, category)
+        worker.finished.connect(self._on_search_done)
+        worker.progress.connect(self._on_progress)
+        worker.error.connect(self._on_error)
+        self.workers.append(worker)
+        worker.start()
+
+    def _on_search_done(self, operation, data):
+        self._show_progress(False)
+        self.current_apps = data
+        self._populate_grid(data, show_installed_state=True)
+
+    def _populate_grid(self, apps, show_installed_state=True):
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not apps:
+            self.empty_label.show()
+            self.grid_layout.addWidget(self.empty_label, 0, 0, 1, -1)
+            return
+
+        self.empty_label.hide()
+        cols = max(1, (self.grid_container.width() - 40) // 280)
+        for idx, app in enumerate(apps):
+            is_installed = app["id"] in self.installed_apps if show_installed_state else False
+            card = AppCard(app, is_installed)
+            card.install_requested.connect(self._install_app)
+            card.uninstall_requested.connect(self._uninstall_app)
+            row = idx // cols
+            col = idx % cols
+            self.grid_layout.addWidget(card, row, col)
+
+        self.grid_layout.addItem(
+            QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
+            (len(apps) // cols) + 1, 0, 1, -1
+        )
+
+    def _show_installed(self):
+        self._show_progress(True, "Kurulu uygulamalar aliniyor...")
+        worker = FlatpakWorker("list_installed")
+        worker.finished.connect(self._on_installed_list)
+        worker.progress.connect(self._on_progress)
+        worker.error.connect(self._on_error)
+        self.workers.append(worker)
+        worker.start()
+
+    def _on_installed_list(self, operation, data):
+        self._show_progress(False)
+        self.installed_apps = data
+        apps = []
+        for app_id, info in data.items():
+            apps.append({
+                "id": app_id,
+                "name": info.get("name", app_id),
+                "description": f"Surum: {info.get('version', 'N/A')}",
+                "version": info.get("version", ""),
+                "origin": info.get("origin", ""),
+            })
+        self.search_input.setText("")
+        self.current_apps = apps
+        self._populate_grid(apps, show_installed_state=True)
+        self.status_label.setText(f"{len(apps)} kurulu uygulama bulundu.")
+        self.status_label.show()
+        QTimer.singleShot(3000, self.status_label.hide)
+
+    def _load_installed(self):
+        worker = FlatpakWorker("list_installed")
+        worker.finished.connect(self._on_initial_installed)
+        worker.error.connect(self._on_error)
+        self.workers.append(worker)
+        worker.start()
+
+    def _on_initial_installed(self, operation, data):
+        self.installed_apps = data
+        self._perform_search()
+
+    def _install_app(self, app_id):
+        reply = QMessageBox.question(
+            self,
+            "Kurulum Onayi",
+            f"'{app_id}' uygulamasini kurmak istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._show_progress(True, f"{app_id} kuruluyor...")
+        worker = FlatpakWorker("install", app_id)
+        worker.finished.connect(self._on_install_done)
+        worker.progress.connect(self._on_progress)
+        worker.error.connect(self._on_error)
+        self.workers.append(worker)
+        worker.start()
+
+    def _on_install_done(self, operation, data):
+        self._show_progress(False)
+        if data.get("success"):
+            self.installed_apps[data["id"]] = {"name": data["id"], "version": "", "origin": ""}
+            self.status_label.setText(f"✅ '{data['id']}' basariyla kuruldu!")
+            self.status_label.setStyleSheet(
+                f"color: {SUCCESS_COLOR}; padding: 4px 20px; font-weight: bold;"
+            )
+            self.status_label.show()
+            QTimer.singleShot(4000, self._reset_status)
+            self._refresh_current_view()
+        else:
+            err = data.get("error", "Bilinmeyen hata")
+            QMessageBox.critical(
+                self, "Kurulum Hatali",
+                f"Kurulum basarisiz oldu:\n\n{err}"
+            )
+
+    def _uninstall_app(self, app_id):
+        reply = QMessageBox.question(
+            self,
+            "Kaldirma Onayi",
+            f"'{app_id}' uygulamasini kaldirmak istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._show_progress(True, f"{app_id} kaldiriliyor...")
+        worker = FlatpakWorker("uninstall", app_id)
+        worker.finished.connect(self._on_uninstall_done)
+        worker.progress.connect(self._on_progress)
+        worker.error.connect(self._on_error)
+        self.workers.append(worker)
+        worker.start()
+
+    def _on_uninstall_done(self, operation, data):
+        self._show_progress(False)
+        if data.get("success"):
+            self.installed_apps.pop(data["id"], None)
+            self.status_label.setText(f"🗑️ '{data['id']}' basariyla kaldirildi!")
+            self.status_label.setStyleSheet(
+                f"color: {WARNING_COLOR}; padding: 4px 20px; font-weight: bold;"
+            )
+            self.status_label.show()
+            QTimer.singleShot(4000, self._reset_status)
+            self._refresh_current_view()
+        else:
+            err = data.get("error", "Bilinmeyen hata")
+            QMessageBox.critical(
+                self, "Kaldirma Hatali",
+                f"Kaldirma basarisiz oldu:\n\n{err}"
+            )
+
+    def _refresh_current_view(self):
+        if self.search_input.text().strip():
+            self._perform_search()
+        elif self.current_category != "Tum":
+            self._perform_search()
+        else:
+            self._show_installed()
+
+    def _refresh_all(self):
+        self.search_input.clear()
+        self.category_combo.setCurrentIndex(0)
+        self._load_installed()
+
+    def _reset_status(self):
+        self.status_label.hide()
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 4px 20px;")
+
+    def _show_progress(self, show, text=""):
+        if show:
+            self.progress_bar.show()
+            self.progress_bar.setRange(0, 0)
+            if text:
+                self.status_label.setText(text)
+                self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 4px 20px;")
+                self.status_label.show()
+        else:
+            self.progress_bar.hide()
+            self.progress_bar.setRange(0, 100)
+
+    def _on_progress(self, value, text):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(value)
+        if text:
+            self.status_label.setText(text)
+            self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 4px 20px;")
+            self.status_label.show()
+
+    def _on_error(self, msg):
+        self._show_progress(False)
+        self.status_label.setText(f"Hata: {msg}")
+        self.status_label.setStyleSheet(
+            f"color: {ERROR_COLOR}; padding: 4px 20px; font-weight: bold;"
+        )
+        self.status_label.show()
+        QTimer.singleShot(5000, self._reset_status)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.current_apps:
+            self._populate_grid(self.current_apps, show_installed_state=True)
+
+    def closeEvent(self, event):
+        for w in self.workers:
+            if w.isRunning():
+                w.cancel()
+                w.wait(2000)
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Hiroki OS Uygulama Magazasi")
+    app.setOrganizationName("HirokiOS")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_INPUT))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_PRIMARY))
+    app.setPalette(palette)
+
+    app.setStyleSheet(STYLE_SHEET)
+
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
+
+    window = MainWindow()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

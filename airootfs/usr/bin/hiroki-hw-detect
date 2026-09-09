@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# Hiroki OS - Donanım Algılama Motoru
+# Sakura 1.0 - hiroki-hw-detect
+# /proc/meminfo, /proc/cpuinfo, lspci, lsblk, systemd-detect-virt kullanarak analiz yapar
+# Çıktı: JSON -> /tmp/hiroki-hw-info.json ve STDOUT
+
+set -euo pipefail
+
+OUTPUT_FILE="${1:-/tmp/hiroki-hw-info.json}"
+
+# --- RAM (MB) ---
+get_ram_mb() {
+    local mem_kb
+    mem_kb=$(grep -m1 '^MemTotal:' /proc/meminfo | awk '{print $2}')
+    echo $(( mem_kb / 1024 ))
+}
+
+# --- CPU Çekirdek Sayısı ---
+get_cpu_cores() {
+    if command -v nproc >/dev/null 2>&1; then
+        nproc --all
+    else
+        grep -c '^processor' /proc/cpuinfo
+    fi
+}
+
+# --- CPU Model ---
+get_cpu_model() {
+    grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs || echo "Bilinmeyen CPU"
+}
+
+# --- GPU Bilgisi ---
+get_gpu_info() {
+    local gpu_raw gpu_vendor gpu_type
+    if command -v lspci >/dev/null 2>&1; then
+        gpu_raw=$(lspci | grep -i -E 'vga|3d|display' | head -n1 || echo "Unknown GPU")
+    else
+        gpu_raw="lspci bulunamadı"
+    fi
+
+    # Vendor tespiti
+    gpu_vendor="unknown"
+    gpu_type="unknown"
+    local lower
+    lower=$(echo "$gpu_raw" | tr '[:upper:]' '[:lower:]')
+    if echo "$lower" | grep -qi nvidia; then
+        gpu_vendor="NVIDIA"
+        gpu_type="nvidia"
+    elif echo "$lower" | grep -qi amd || echo "$lower" | grep -qi radeon; then
+        gpu_vendor="AMD"
+        gpu_type="amd"
+    elif echo "$lower" | grep -qi intel; then
+        gpu_vendor="Intel"
+        gpu_type="intel"
+    elif echo "$lower" | grep -qi vmware || echo "$lower" | grep -qi virtualbox || echo "$lower" | grep -qi qxl || echo "$lower" | grep -qi virtio; then
+        gpu_vendor="Virtual"
+        gpu_type="virtual"
+    fi
+    # Pipe karakterini temizle
+    gpu_raw=$(echo "$gpu_raw" | sed 's/"/\\"/g')
+    echo "$gpu_raw|$gpu_vendor|$gpu_type"
+}
+
+# --- Disk Alanı (GB) ---
+get_disk_gb() {
+    local disk_kb
+    # En büyük disk'i al (lsblk)
+    if command -v lsblk >/dev/null 2>&1; then
+        # byte cinsinden en büyük disk
+        local bytes
+        bytes=$(lsblk -bdn -o SIZE | sort -n | tail -n1)
+        if [[ -n "$bytes" ]]; then
+            echo $(( bytes / 1024 / 1024 / 1024 ))
+            return
+        fi
+    fi
+    # fallback: df
+    df --output=size -B1 / | tail -n1 | awk '{print int($1/1024/1024/1024)}'
+}
+
+# --- Sanal Makine Kontrolü ---
+get_virt() {
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        local v
+        v=$(systemd-detect-virt 2>/dev/null || echo "none")
+        echo "$v"
+    else
+        echo "none"
+    fi
+}
+
+# --- Öneri Matrisi ---
+get_recommendation() {
+    local ram_mb=$1
+    local recommendation primary secondary message tier
+
+    if [[ $ram_mb -le 512 ]]; then
+        tier="minimal"
+        primary="i3wm,openbox"
+        secondary="lxqt"
+        message="Donanımınız çok sınırlı, pencere yöneticisi kullanmanız önerilir"
+        recommendation="i3wm"
+    elif [[ $ram_mb -gt 512 && $ram_mb -lt 2048 ]]; then
+        tier="light"
+        primary="lxqt"
+        secondary="xfce"
+        message="Donanımınız hafif bir masaüstü ortamı için uygun"
+        recommendation="lxqt"
+    elif [[ $ram_mb -ge 2048 && $ram_mb -lt 4096 ]]; then
+        tier="medium"
+        primary="xfce"
+        secondary="lxqt,mate"
+        message="Donanımınız orta seviye masaüstü ortamları için uygun"
+        recommendation="xfce"
+    elif [[ $ram_mb -ge 4096 && $ram_mb -lt 8192 ]]; then
+        tier="full"
+        primary="kde"
+        secondary="xfce,gnome,cinnamon,budgie"
+        message="Donanımınız tam özellikli masaüstü ortamları için uygun"
+        recommendation="kde"
+    else # 8192+
+        tier="high"
+        primary="kde,gnome"
+        secondary="all"
+        message="Donanımınız tüm masaüstü ortamlarını rahatça çalıştırabilir"
+        recommendation="kde"
+    fi
+
+    echo "$tier|$primary|$secondary|$message|$recommendation"
+}
+
+# --- ANA ÇALIŞMA ---
+RAM_MB=$(get_ram_mb)
+CPU_CORES=$(get_cpu_cores)
+CPU_MODEL=$(get_cpu_model | sed 's/"/\\"/g')
+GPU_LINE=$(get_gpu_info)
+GPU_RAW=$(echo "$GPU_LINE" | cut -d'|' -f1)
+GPU_VENDOR=$(echo "$GPU_LINE" | cut -d'|' -f2)
+GPU_TYPE=$(echo "$GPU_LINE" | cut -d'|' -f3)
+DISK_GB=$(get_disk_gb)
+VIRT=$(get_virt)
+IS_VM="false"
+if [[ "$VIRT" != "none" && "$VIRT" != "" ]]; then
+    IS_VM="true"
+fi
+
+REC_LINE=$(get_recommendation "$RAM_MB")
+TIER=$(echo "$REC_LINE" | cut -d'|' -f1)
+PRIMARY=$(echo "$REC_LINE" | cut -d'|' -f2)
+SECONDARY=$(echo "$REC_LINE" | cut -d'|' -f3)
+MESSAGE=$(echo "$REC_LINE" | cut -d'|' -f4)
+RECOMMENDED=$(echo "$REC_LINE" | cut -d'|' -f5)
+
+# Alternatif liste oluştur (tüm DE'ler)
+ALL_DES="xfce,kde,gnome,cinnamon,mate,budgie,lxqt,i3wm,openbox,hyprland"
+
+# JSON oluştur
+cat > "$OUTPUT_FILE" <<EOF
+{
+  "ram_mb": $RAM_MB,
+  "ram_gb": $(awk "BEGIN {printf \"%.1f\", $RAM_MB/1024}"),
+  "cpu_cores": $CPU_CORES,
+  "cpu_model": "$CPU_MODEL",
+  "gpu_raw": "$GPU_RAW",
+  "gpu_vendor": "$GPU_VENDOR",
+  "gpu_type": "$GPU_TYPE",
+  "disk_gb": $DISK_GB,
+  "virt": "$VIRT",
+  "is_vm": $IS_VM,
+  "tier": "$TIER",
+  "primary": "$PRIMARY",
+  "secondary": "$SECONDARY",
+  "message": "$MESSAGE",
+  "recommended": "$RECOMMENDED",
+  "all_des": "$ALL_DES",
+  "timestamp": "$(date -Iseconds)"
+}
+EOF
+
+# Ayrıca stdout'a da yaz
+cat "$OUTPUT_FILE"
+
+# Uyarı kontrolü için yardımcı: eğer kullanıcı ağır DE seçerse uyarı göster
+# Bu fonksiyon Calamares modülü veya GUI tarafından çağrılır
+if [[ "${2:-}" == "--check-warning" ]]; then
+    SELECTED="${3:-}"
+    HEAVY_DES=("kde" "gnome" "hyprland" "cinnamon" "budgie")
+    if [[ $RAM_MB -le 2048 ]]; then
+        for d in "${HEAVY_DES[@]}"; do
+            if [[ "$SELECTED" == "$d" ]]; then
+                echo "UYARI: Seçtiğiniz masaüstü ortamı ($SELECTED) donanımınız için ağır olabilir (RAM: ${RAM_MB}MB). Performans sorunları yaşayabilirsiniz." >&2
+                exit 10
+            fi
+        done
+    fi
+fi
+
+exit 0

@@ -1,0 +1,29 @@
+/* Hiroki OS - Waybar - Sakura */
+* { font-family: Inter, sans-serif; font-size: 12px; }
+window#waybar {
+  background-color: #0D0D1A;
+  color: #EAEAEA;
+  border-bottom: 2px solid #2D1B69;
+}
+#workspaces button {
+  padding: 0 8px;
+  color: #A0A0B8;
+  background: transparent;
+  border-radius: 6px;
+}
+#workspaces button.active {
+  background: #E91E8C;
+  color: white;
+}
+#workspaces button:hover {
+  background: #2D1B69;
+  color: #EAEAEA;
+}
+#clock, #cpu, #memory, #pulseaudio, #network, #tray, #custom-power {
+  padding: 0 10px;
+  margin: 4px 2px;
+  background: #1A1A2E;
+  border-radius: 8px;
+  border: 1px solid #2D1B69;
+}
+#custom-power { background: #E91E8C; color: white; }

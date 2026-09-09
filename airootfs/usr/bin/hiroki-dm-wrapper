@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Hiroki OS - Oturum Başlatıcı Sarmalayıcı
+# D-Bus ve PipeWire/WirePlumber oturum ortamını hazırlar, ardından
+# /usr/bin/hiroki-dm'i (gerçek DM) çalıştırır.
+set -euo pipefail
+
+# D-Bus oturumu yoksa bir tane açıp kendimizi yeniden çağır
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    if command -v dbus-run-session >/dev/null 2>&1; then
+        exec dbus-run-session -- "$0" "$@"
+    fi
+fi
+
+# XDG_RUNTIME_DIR (PipeWire/systemd --user için gerekli)
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    XDG_RUNTIME_DIR="/tmp/run-$(id -u)"
+    export XDG_RUNTIME_DIR
+fi
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+
+# PipeWire/WirePlumber kullanıcı servislerini başlat
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+fi
+
+# Asıl oturum başlatıcıyı çalıştır
+exec /usr/bin/hiroki-dm "$@"

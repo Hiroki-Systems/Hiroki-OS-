@@ -1,0 +1,17 @@
+# Hiroki OS - Mako (Wayland notifications)
+background-color=#1A1A2E
+text-color=#EAEAEA
+border-color=#E91E8C
+border-size=2
+border-radius=12
+padding=12
+margin=10
+width=360
+height=120
+font=Inter 10
+anchor=top-right
+default-timeout=5000
+[urgency=high]
+background-color=#E91E8C
+text-color=#FFFFFF
+border-color=#2D1B69

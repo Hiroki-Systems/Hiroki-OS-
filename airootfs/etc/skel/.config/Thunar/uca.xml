@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thunar-custom-actions>
+  <action>
+    <icon>${system.exec}</icon>
+    <name>Dosya Boyutunu Goster</name>
+    <unique-id>1</unique-id>
+    <command>file -s "$f"</command>
+    <description>Dosya hakkinda detayli bilgi gosterir</description>
+    <patterns>*</patterns>
+    <directories/>
+    <text-files/>
+    <image-files/>
+  </action>
+  <action>
+    <icon>image-x-generic</icon>
+    <name>Duvar Kagit olarak Ayarla</name>
+    <unique-id>2</unique-id>
+    <command>feh --bg-scale "$f"</command>
+    <description>Secili resmi duvar kagidi olarak ayarlar</description>
+    <patterns>*.jpg;*.jpeg;*.png;*.bmp;*.webp</patterns>
+    <image-files/>
+  </action>
+  <action>
+    <icon>utilities-terminal</icon>
+    <name>Bu Dizinde Terminal Ac</name>
+    <unique-id>3</unique-id>
+    <command>xfce4-terminal --working-directory="%f"</command>
+    <description>Secili dizinde terminal acar</description>
+    <directories/>
+  </action>
+</thunar-custom-actions>

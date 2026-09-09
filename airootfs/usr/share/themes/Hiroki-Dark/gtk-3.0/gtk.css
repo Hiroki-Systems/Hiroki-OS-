@@ -1,0 +1,165 @@
+/* Hiroki OS - Hiroki-Dark GTK3 Tema
+ * Arc Dark tabanlı, Hiroki renk paleti ile özelleştirilmiş
+ * Renkler: #2D1B69 mor, #E91E8C pembe, #00D4AA turkuaz, #0D0D1A koyu, #1A1A2E lacivert, #EAEAEA açık gri
+ */
+
+@define-color hiroki_primary #2D1B69;
+@define-color hiroki_pink #E91E8C;
+@define-color hiroki_turquoise #00D4AA;
+@define-color hiroki_bg_dark #0D0D1A;
+@define-color hiroki_bg #1A1A2E;
+@define-color hiroki_text #EAEAEA;
+@define-color hiroki_text2 #A0A0B8;
+@define-color hiroki_border #2D1B69;
+@define-color hiroki_selected_bg #E91E8C;
+@define-color hiroki_selected_fg #ffffff;
+
+/* Temel */
+* {
+  -GtkWidget-window-dragging: true;
+}
+
+window, dialog, messagedialog {
+  background-color: @hiroki_bg_dark;
+  color: @hiroki_text;
+}
+
+headerbar, .titlebar {
+  background: linear-gradient(135deg, @hiroki_primary 0%, @hiroki_bg 100%);
+  color: @hiroki_text;
+  border-bottom: 1px solid @hiroki_border;
+  padding: 6px;
+}
+
+headerbar button {
+  background-color: @hiroki_bg;
+  color: @hiroki_text;
+  border-radius: 6px;
+  border: 1px solid @hiroki_border;
+  padding: 6px 12px;
+}
+
+headerbar button:hover {
+  background-color: @hiroki_primary;
+  border-color: @hiroki_pink;
+}
+
+/* Butonlar */
+button {
+  background-color: @hiroki_bg;
+  color: @hiroki_text;
+  border: 1px solid @hiroki_border;
+  border-radius: 8px;
+  padding: 6px 12px;
+  transition: all 200ms ease;
+}
+
+button:hover {
+  background-color: @hiroki_primary;
+  border-color: @hiroki_pink;
+}
+
+button:active, button:checked {
+  background-color: @hiroki_pink;
+  color: white;
+  border-color: @hiroki_pink;
+}
+
+button.suggested-action {
+  background: linear-gradient(135deg, @hiroki_primary 0%, @hiroki_pink 100%);
+  color: white;
+  border: none;
+  font-weight: bold;
+}
+
+button.suggested-action:hover {
+  background: linear-gradient(135deg, @hiroki_pink 0%, @hiroki_primary 100%);
+}
+
+/* Giriş alanları */
+entry, textview {
+  background-color: @hiroki_bg;
+  color: @hiroki_text;
+  border: 1px solid @hiroki_border;
+  border-radius: 8px;
+  padding: 6px 10px;
+  caret-color: @hiroki_pink;
+}
+
+entry:focus {
+  border-color: @hiroki_pink;
+  box-shadow: 0 0 0 2px alpha(@hiroki_pink, 0.3);
+}
+
+/* Liste ve ağaç */
+list, treeview {
+  background-color: @hiroki_bg_dark;
+  color: @hiroki_text;
+}
+
+list row:selected, treeview:selected {
+  background-color: @hiroki_pink;
+  color: white;
+}
+
+/* Menü */
+menu, popover {
+  background-color: @hiroki_bg;
+  color: @hiroki_text;
+  border: 1px solid @hiroki_border;
+  border-radius: 10px;
+  padding: 6px;
+}
+
+menuitem:hover {
+  background-color: @hiroki_primary;
+  color: white;
+  border-radius: 6px;
+}
+
+/* Sekmeler */
+notebook header {
+  background-color: @hiroki_bg_dark;
+  border-bottom: 1px solid @hiroki_border;
+}
+
+notebook tab {
+  background-color: @hiroki_bg;
+  color: @hiroki_text2;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 16px;
+  margin-right: 4px;
+}
+
+notebook tab:checked {
+  background-color: @hiroki_primary;
+  color: @hiroki_text;
+  border-bottom: 2px solid @hiroki_pink;
+}
+
+/* Kaydırma çubuğu */
+scrollbar slider {
+  background-color: @hiroki_border;
+  border-radius: 10px;
+  min-width: 8px;
+  min-height: 8px;
+}
+
+scrollbar slider:hover {
+  background-color: @hiroki_pink;
+}
+
+/* Tooltip */
+tooltip {
+  background-color: @hiroki_bg;
+  color: @hiroki_text;
+  border: 1px solid @hiroki_pink;
+  border-radius: 8px;
+  padding: 6px;
+}
+
+/* Seçim */
+selection {
+  background-color: @hiroki_pink;
+  color: white;
+}

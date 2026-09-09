@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Linis autostart — oturum başlangıcında çalışan uygulamalar.
+# Kopyalayıp düzenleyin: ~/.config/linis/autostart
+
+# glycin SVG sandbox crash engelle
+export GDK_DISABLE_SANDBOXED_LOADER=1
+
+# Panel (sol + alt tek process)
+command -v linis-panel >/dev/null 2>&1 && linis-panel &
+
+# Bildirimler
+command -v dunst >/dev/null 2>&1 && dunst &
+
+# Ses / ağ
+command -v volumeicon >/dev/null 2>&1 && volumeicon &
+command -v nm-applet  >/dev/null 2>&1 && nm-applet &
+
+# Duvar kağıdını değiştirip compositor'e bildirmek için:
+#   feh --no-fehbg --bg-fill ~/duvar.jpg && kill -USR1 "$(pgrep -x linis)"

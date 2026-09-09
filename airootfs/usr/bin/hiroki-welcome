@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Hiroki OS - Hoşgeldin Uygulaması (İlk kurulum sonrası rehber)"""
+import json, os, subprocess, sys, tempfile, urllib.request, pathlib
+
+GIST_URL = "https://gist.githubusercontent.com/kuzkuz5353-source/7cc6fc59caba259e102d36ebe442db0c/raw/gistfile1.txt"
+
+def fetch_packages():
+    """Gist'ten paket linklerini oku"""
+    try:
+        req = urllib.request.Request(GIST_URL, headers={"User-Agent": "HirokiOS/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read().decode("utf-8").strip()
+        urls = [line.strip() for line in data.splitlines() if line.strip() and line.strip().startswith("http") and (".zst" in line or ".pkg" in line)]
+        return urls
+    except Exception as e:
+        print(f"[hiroki-welcome] Gist okunamadi: {e}")
+        return []
+
+def install_zst(url):
+    """ZST dosyasini indir ve ayikla"""
+    print(f"[hiroki-welcome] Indiriliyor: {url}")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filename = url.split("/")[-1]
+        filepath = os.path.join(tmpdir, filename)
+        try:
+            urllib.request.urlretrieve(url, filepath)
+        except Exception as e:
+            print(f"  Indirme hatasi: {e}")
+            return False
+        # zstd ile ayikla
+        try:
+            subprocess.run(["zstd", "-d", filepath, "-o", filepath.replace(".zst", "")], check=True, capture_output=True)
+            extracted = filepath.replace(".zst", "")
+        except subprocess.CalledProcessError:
+            # zstd yoksa pacman -U ile dene
+            try:
+                subprocess.run(["sudo", "pacman", "-U", "--noconfirm", filepath], check=True, capture_output=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"  Kurulum hatasi: {e}")
+                return False
+        # Ayiklanan dosya .pkg.tar.zst ise pacman -U
+        if extracted.endswith(".pkg.tar.zst") or extracted.endswith(".pkg.tar.xz"):
+            try:
+                subprocess.run(["sudo", "pacman", "-U", "--noconfirm", extracted], check=True, capture_output=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"  Kurulum hatasi: {e}")
+                return False
+        # .desktop dosyasi ise kopyala
+        for root, dirs, files in os.walk(tmpdir):
+            for f in files:
+                if f.endswith(".desktop"):
+                    src = os.path.join(root, f)
+                    dst = os.path.expanduser(f"~/.local/share/applications/{f}")
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    subprocess.run(["cp", src, dst], check=True)
+                    print(f"  .desktop yerlestirildi: {f}")
+    return True
+
+def main():
+    # PyQt6 varsa GUI, yoksa terminal
+    try:
+        from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                                      QLabel, QPushButton, QHBoxLayout, QTextEdit, QFrame)
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QFont
+        HAS_PYQT = True
+    except ImportError:
+        HAS_PYQT = False
+
+    if HAS_PYQT:
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+
+        # Pencere
+        win = QMainWindow()
+        win.setWindowTitle("Hiroki OS - Hoşgeldin!")
+        win.setMinimumSize(600, 500)
+        win.setMaximumSize(600, 500)
+
+        central = QWidget()
+        win.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+
+        # Baslik
+        title = QLabel("Hiroki OS'ye Hos Geldin!")
+        title.setFont(QFont("Sans Serif", 22, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("color: #d34188; margin-bottom: 10px;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Sakura 1.0")
+        subtitle.setFont(QFont("Sans Serif", 12))
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet("color: #888; margin-bottom: 20px;")
+        layout.addWidget(subtitle)
+
+        # Ayirici
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color: #444;")
+        layout.addWidget(line)
+
+        # Soru
+        question = QLabel("Linux'a yeni mi basladın?")
+        question.setFont(QFont("Sans Serif", 14))
+        question.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        question.setStyleSheet("color: #eee; margin: 20px 0;")
+        layout.addWidget(question)
+
+        # Butonlar
+        btn_layout = QHBoxLayout()
+
+        yes_btn = QPushButton("Evet, yeniyim!")
+        yes_btn.setMinimumHeight(45)
+        yes_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d34188;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px 30px;
+            }
+            QPushButton:hover { background-color: #e91e8c; }
+        """)
+
+        no_btn = QPushButton("Hayir, deneyimliyim")
+        no_btn.setMinimumHeight(45)
+        no_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: #aaa;
+                border: 1px solid #555;
+                border-radius: 8px;
+                font-size: 14px;
+                padding: 10px 30px;
+            }
+            QPushButton:hover { background-color: #444; color: #fff; }
+        """)
+
+        btn_layout.addWidget(yes_btn)
+        btn_layout.addWidget(no_btn)
+        layout.addLayout(btn_layout)
+
+        # Log alani
+        log_area = QTextEdit()
+        log_area.setReadOnly(True)
+        log_area.setStyleSheet("background-color: #1a1a1a; color: #ccc; border: 1px solid #333; border-radius: 6px; font-family: monospace; font-size: 11px; padding: 8px;")
+        log_area.hide()
+        layout.addWidget(log_area)
+
+        # Durum
+        status = QLabel("")
+        status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(status)
+
+        def on_yes():
+            yes_btn.setEnabled(False)
+            no_btn.setEnabled(False)
+            log_area.show()
+            log_area.append("[1/4] Gist okunuyor...")
+            app.processEvents()
+
+            urls = fetch_packages()
+            if not urls:
+                log_area.append("  Pacte bulunamadi veya gist bos.")
+                log_area.append("")
+                log_area.append("Suanlik bir sey kurulmayacak.")
+                log_area.append("Gist guncellendiginde tekrar calistirabilirsin:")
+                log_area.append("  hiroki-welcome")
+                status.setText("Tamam!")
+                yes_btn.setEnabled(True)
+                no_btn.setEnabled(True)
+                return
+
+            log_area.append(f"  {len(urls)} paket bulundu.")
+            log_area.append("")
+            log_area.append("[2/4] Paketler indiriliyor ve kuruluyor...")
+            app.processEvents()
+
+            success = 0
+            fail = 0
+            for i, url in enumerate(urls, 1):
+                log_area.append(f"  [{i}/{len(urls)}] {url.split('/')[-1]}")
+                app.processEvents()
+                if install_zst(url):
+                    success += 1
+                else:
+                    fail += 1
+
+            log_area.append("")
+            log_area.append(f"[3/4] Kurulum tamamlandi: {success} basarili, {fail} basarisiz")
+            log_area.append("")
+            log_area.append("[4/4] .desktop dosyalari yerlestirildi.")
+            log_area.append("")
+            log_area.append("Hos geldin! Sistem hazir.")
+            status.setText("Kurulum tamamlandi!")
+
+            yes_btn.setEnabled(True)
+            no_btn.setText("Kapat")
+            no_btn.setEnabled(True)
+
+        def on_no():
+            win.close()
+
+        yes_btn.clicked.connect(on_yes)
+        no_btn.clicked.connect(on_no)
+
+        # Stil
+        win.setStyleSheet("background-color: #111;")
+
+        win.show()
+        sys.exit(app.exec())
+    else:
+        # Terminal modu
+        print()
+        print("  \033[1;35mHiroki OS'ye Hos Geldin!\033[0m")
+        print("  \033[2mSakura 1.0\033[0m")
+        print()
+        print("  Linux'a yeni mi basladin? (evet/hayir): ", end="")
+        answer = input().strip().lower()
+
+        if answer in ("evet", "e", "yes", "y"):
+            print()
+            print("  Gist okunuyor...")
+            urls = fetch_packages()
+            if not urls:
+                print("  Pacte bulunamadi veya gist bos.")
+                print("  hiroki-welcome ile tekrar deneyebilirsin.")
+                return
+
+            print(f"  {len(urls)} paket bulundu.")
+            print()
+            for i, url in enumerate(urls, 1):
+                print(f"  [{i}/{len(urls)}] {url.split('/')[-1]}")
+                install_zst(url)
+
+            print()
+            print("  Kurulum tamamlandi!")
+        else:
+            print()
+            print("  Tamam, iyi eglenceler!")
+
+        print()
+
+if __name__ == "__main__":
+    main()

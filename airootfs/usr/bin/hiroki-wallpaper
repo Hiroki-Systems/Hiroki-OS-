@@ -1,0 +1,742 @@
+#!/usr/bin/env python3
+"""
+Hiroki OS Wallpaper Selector
+A OOBE-style wallpaper picker for Hiroki OS.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QPixmap,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+ACCENT = "#d34188"
+BG_DARK = "#111111"
+BG_CARD = "#1a1a1a"
+BG_CARD_HOVER = "#252525"
+BG_SELECTED = "#1a1220"
+TEXT_PRIMARY = "#f0f0f0"
+TEXT_SECONDARY = "#999999"
+BORDER_DEFAULT = "#333333"
+WALLPAPER_DIRS = [
+    Path("/usr/share/wallpapers"),
+    Path(os.path.expanduser("~/.local/share/wallpapers")),
+]
+PLACEHOLDER_COLORS = [
+    ("#1a1a2e", "#16213e", "#0f3460"),
+    ("#2d132c", "#801336", "#c72c41"),
+    ("#1b262c", "#0f4c75", "#3282b8"),
+    ("#2c3e50", "#3498db", "#2ecc71"),
+    ("#2c003e", "#512b58", "#8174a0"),
+    ("#1a1a2e", "#e94560", "#533483"),
+    ("#0d1117", "#161b22", "#21262d"),
+    ("#1e1e2e", "#45475a", "#585b70"),
+    ("#181825", "#313244", "#45475a"),
+    ("#11111b", "#1e1e2e", "#313244"),
+    ("#1a1a2e", "#e94560", "#c72c41"),
+    ("#162447", "#1f4068", "#e43f5a"),
+]
+
+
+class ThumbnailWorker(QThread):
+    loaded = pyqtSignal(int, QPixmap)
+
+    def __init__(self, paths, parent=None):
+        super().__init__(parent)
+        self.paths = paths
+        self._stop = False
+
+    def run(self):
+        for i, p in enumerate(self.paths):
+            if self._stop:
+                return
+            pixmap = QPixmap(p)
+            if not pixmap.isNull():
+                pixmap = pixmap.scaled(
+                    300, 200, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            self.loaded.emit(i, pixmap)
+
+    def stop(self):
+        self._stop = True
+
+
+class WallpaperCard(QFrame):
+    clicked = pyqtSignal(str)
+
+    def __init__(self, filepath, display_name, parent=None):
+        super().__init__(parent)
+        self.filepath = filepath
+        self.display_name = display_name
+        self._selected = False
+        self._pixmap = None
+        self._placeholder = None
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setFixedSize(220, 180)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            f"""
+            WallpaperCard {{
+                background-color: {BG_CARD};
+                border: 2px solid {BORDER_DEFAULT};
+                border-radius: 12px;
+            }}
+            WallpaperCard:hover {{
+                border-color: {ACCENT};
+                background-color: {BG_CARD_HOVER};
+            }}
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self._preview_label = QLabel()
+        self._preview_label.setFixedSize(200, 120)
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setStyleSheet("border: none; background: transparent;")
+        layout.addWidget(self._preview_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        self._name_label = QLabel(self.display_name)
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._name_label.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 11px; border: none; background: transparent;"
+        )
+        self._name_label.setWordWrap(True)
+        layout.addWidget(self._name_label)
+
+    def set_pixmap(self, pixmap):
+        self._pixmap = pixmap
+        scaled = pixmap.scaled(
+            200, 120,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._preview_label.setPixmap(scaled)
+
+    def set_placeholder(self, colors):
+        self._placeholder = colors
+        pm = QPixmap(200, 120)
+        pm.fill(QColor(colors[0]))
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, 200, 120, 8, 8)
+        painter.setClipPath(path)
+
+        painter.setBrush(QColor(colors[1]))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(-20, 20, 120, 120)
+
+        painter.setBrush(QColor(colors[2]))
+        painter.drawEllipse(80, 40, 100, 100)
+
+        gradient_colors = [
+            (QColor(colors[1]).lighter(130), 0, 0),
+            (QColor(colors[2]).lighter(110), 120, 60),
+        ]
+        for color, x, y in gradient_colors:
+            painter.setBrush(color)
+            painter.drawEllipse(x, y, 70, 70)
+
+        painter.end()
+        self._preview_label.setPixmap(pm)
+
+    def set_selected(self, selected):
+        self._selected = selected
+        if selected:
+            self.setStyleSheet(
+                f"""
+                WallpaperCard {{
+                    background-color: {BG_SELECTED};
+                    border: 2px solid {ACCENT};
+                    border-radius: 12px;
+                }}
+                """
+            )
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(30)
+            shadow.setColor(QColor(ACCENT))
+            shadow.setOffset(0, 0)
+            self.setGraphicsEffect(shadow)
+        else:
+            self.setStyleSheet(
+                f"""
+                WallpaperCard {{
+                    background-color: {BG_CARD};
+                    border: 2px solid {BORDER_DEFAULT};
+                    border-radius: 12px;
+                }}
+                WallpaperCard:hover {{
+                    border-color: {ACCENT};
+                    background-color: {BG_CARD_HOVER};
+                }}
+                """
+            )
+            self.setGraphicsEffect(None)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.filepath)
+        super().mousePressEvent(event)
+
+
+class LargePreview(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(350, 250)
+        self.setStyleSheet(
+            f"""
+            LargePreview {{
+                background-color: {BG_CARD};
+                border: 2px solid {BORDER_DEFAULT};
+                border-radius: 16px;
+            }}
+            """
+        )
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._preview_label = QLabel("Secili duvar kagidi yok")
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 14px; border: none; background: transparent;"
+        )
+        self._preview_label.setMinimumSize(330, 230)
+        layout.addWidget(self._preview_label)
+
+    def set_pixmap(self, pixmap):
+        scaled = pixmap.scaled(
+            330, 230,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._preview_label.setPixmap(scaled)
+        self._preview_label.setStyleSheet("border: none; background: transparent;")
+
+    def set_placeholder(self, text="Secili duvar kagidi yok"):
+        self._preview_label.setText(text)
+        self._preview_label.setPixmap(QPixmap())
+        self._preview_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 14px; border: none; background: transparent;"
+        )
+
+    def clear_selection(self):
+        self.set_placeholder("Secili duvar kagidi yok")
+
+
+class HirokiWallpaper(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Duvar Kagitlari")
+        self.setMinimumSize(800, 600)
+        self.resize(1000, 700)
+        self._selected_path = None
+        self._cards = []
+        self._worker = None
+        self._all_wallpapers = []
+        self._category_map = {
+            "Tumu": [],
+            "Dogal": [],
+            "Soyut": [],
+            "Minimal": [],
+            "Renkli": [],
+            "Oyun": [],
+        }
+
+        self._apply_palette()
+        self._build_ui()
+        self._load_wallpapers()
+
+    def _apply_palette(self):
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Base, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Button, QColor(BG_CARD))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        QApplication.instance().setPalette(palette)
+
+    def _build_ui):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(24, 16, 24, 16)
+        main_layout.setSpacing(12)
+
+        header_layout = QHBoxLayout()
+        title = QLabel("Duvar Kagitlari")
+        title.setStyleSheet(
+            f"""
+            font-size: 32px;
+            font-weight: bold;
+            color: {ACCENT};
+            padding: 4px 0;
+            """
+        )
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        subtitle = QLabel("Hiroki OS")
+        subtitle.setStyleSheet(
+            f"font-size: 14px; color: {TEXT_SECONDARY}; padding-top: 8px;"
+        )
+        header_layout.addWidget(subtitle)
+        main_layout.addLayout(header_layout)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"background-color: {BORDER_DEFAULT}; max-height: 1px;")
+        main_layout.addWidget(separator)
+
+        self._tab_container = QWidget()
+        tab_layout = QHBoxLayout(self._tab_container)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(6)
+
+        self._tabs = {}
+        tab_names = ["Tumu", "Dogal", "Soyut", "Minimal", "Renkli", "Oyun"]
+        for name in tab_names:
+            btn = QPushButton(name)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: {BG_CARD};
+                    color: {TEXT_PRIMARY};
+                    border: 1px solid {BORDER_DEFAULT};
+                    border-radius: 20px;
+                    padding: 8px 20px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    border-color: {ACCENT};
+                    background-color: {BG_CARD_HOVER};
+                }}
+                QPushButton:checked {{
+                    background-color: {ACCENT};
+                    color: #ffffff;
+                    border-color: {ACCENT};
+                }}
+                """
+            )
+            btn.clicked.connect(lambda checked, n=name: self._select_category(n))
+            tab_layout.addWidget(btn)
+            self._tabs[name] = btn
+
+        tab_layout.addStretch()
+        self._tab_container.setStyleSheet("background: transparent;")
+        main_layout.addWidget(self._tab_container)
+
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(16)
+
+        left_panel = QWidget()
+        left_panel.setStyleSheet("background: transparent;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        self._count_label = QLabel("0 duvar kagidi bulundu")
+        self._count_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent; border: none;"
+        )
+        left_layout.addWidget(self._count_label)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            f"""
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: {BG_DARK};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER_DEFAULT};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {ACCENT};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            """
+        )
+
+        self._grid_widget = QWidget()
+        self._grid_layout = QGridLayout(self._grid_widget)
+        self._grid_layout.setSpacing(12)
+        self._grid_layout.setContentsMargins(4, 4, 4, 4)
+        scroll.setWidget(self._grid_widget)
+        left_layout.addWidget(scroll)
+
+        content_layout.addWidget(left_panel, stretch=3)
+
+        right_panel = QWidget()
+        right_panel.setStyleSheet("background: transparent;")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
+
+        preview_title = QLabel("Onizleme")
+        preview_title.setStyleSheet(
+            f"""
+            font-size: 16px;
+            font-weight: bold;
+            color: {TEXT_PRIMARY};
+            background: transparent;
+            border: none;
+            """
+        )
+        right_layout.addWidget(preview_title)
+
+        self._large_preview = LargePreview()
+        right_layout.addWidget(self._large_preview)
+
+        self._selected_name_label = QLabel("")
+        self._selected_name_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent; border: none;"
+        )
+        self._selected_name_label.setWordWrap(True)
+        right_layout.addWidget(self._selected_name_label)
+
+        self._apply_btn = QPushButton("Uygula")
+        self._apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_btn.setEnabled(False)
+        self._apply_btn.setMinimumHeight(44)
+        self._apply_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: 22px;
+                font-size: 15px;
+                font-weight: bold;
+                padding: 0 32px;
+            }}
+            QPushButton:hover {{
+                background-color: #e0549a;
+            }}
+            QPushButton:pressed {{
+                background-color: #c03878;
+            }}
+            QPushButton:disabled {{
+                background-color: {BORDER_DEFAULT};
+                color: {TEXT_SECONDARY};
+            }}
+            """
+        )
+        self._apply_btn.clicked.connect(self._apply_wallpaper)
+        right_layout.addWidget(self._apply_btn)
+
+        right_layout.addStretch()
+        content_layout.addWidget(right_panel, stretch=2)
+
+        main_layout.addLayout(content_layout, stretch=1)
+
+    def _load_wallpapers(self):
+        image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".svg"}
+        all_files = []
+        seen = set()
+
+        for dir_path in WALLPAPER_DIRS:
+            if dir_path.is_dir():
+                for f in sorted(dir_path.rglob("*")):
+                    if f.is_file() and f.suffix.lower() in image_exts:
+                        resolved = f.resolve()
+                        if resolved not in seen:
+                            seen.add(resolved)
+                            all_files.append(str(f))
+
+        self._all_wallpapers = all_files
+        self._categorize()
+        self._display_wallpapers()
+
+    def _categorize(self):
+        keywords = {
+            "Dogal": ["nature", "forest", "mountain", "sea", "ocean", "sky",
+                      "flower", "sunset", "sunrise", "tree", "lake", "river",
+                      "waterfall", "beach", "cloud", "star", "moon", "sun",
+                      "dogal", "manzara", "yesil", "agac", "deniz"],
+            "Soyut": ["abstract", "geometric", "gradient", "pattern", "swirl",
+                      "wave", "moire", "soyut", "soyut"],
+            "Minimal": ["minimal", "clean", "simple", "flat", "solid",
+                        "minimal", "duz", "sade"],
+            "Renkli": ["color", "vibrant", "neon", "bright", "rainbow",
+                       "colorful", "renkli", "canli"],
+            "Oyun": ["game", "gaming", "pixel", "retro", "cyber", "space",
+                     "sci-fi", "oyun", "robot", "cyberpunk"],
+        }
+
+        for cat in self._category_map:
+            self._category_map[cat] = []
+        self._category_map["Tumu"] = list(self._all_wallpapers)
+
+        for fp in self._all_wallpapers:
+            fname = os.path.basename(fp).lower()
+            for cat, kws in keywords.items():
+                for kw in kws:
+                    if kw in fname:
+                        self._category_map[cat].append(fp)
+                        break
+
+        for cat in ["Dogal", "Soyut", "Minimal", "Renkli", "Oyun"]:
+            if not self._category_map[cat]:
+                self._category_map[cat] = list(self._all_wallpapers)
+
+    def _select_category(self, name):
+        for cat_name, btn in self._tabs.items():
+            btn.setChecked(cat_name == name)
+        self._display_wallpapers(name)
+
+    def _display_wallpapers(self, category="Tumu"):
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(2000)
+
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self._cards = []
+        wallpapers = self._category_map.get(category, [])
+        count = len(wallpapers)
+        self._count_label.setText(f"{count} duvar kagidi bulundu")
+
+        if count == 0:
+            self._display_placeholders()
+            return
+
+        cols = max(1, (self._grid_widget.width() - 24) // 232)
+        if cols < 1:
+            cols = 3
+
+        self._worker = ThumbnailWorker(wallpapers, self)
+        self._worker.loaded.connect(self._on_thumbnail_loaded)
+
+        for i, fp in enumerate(wallpapers):
+            name = Path(fp).stem.replace("_", " ").replace("-", " ").title()
+            card = WallpaperCard(fp, name)
+            card.clicked.connect(self._on_card_clicked)
+            row = i // cols
+            col = i % cols
+            self._grid_layout.addWidget(card, row, col)
+            self._cards.append(card)
+
+        self._worker.start()
+
+    def _on_thumbnail_loaded(self, index, pixmap):
+        if index < len(self._cards):
+            if not pixmap.isNull():
+                self._cards[index].set_pixmap(pixmap)
+            else:
+                colors = PLACEHOLDER_COLORS[index % len(PLACEHOLDER_COLORS)]
+                self._cards[index].set_placeholder(colors)
+
+    def _display_placeholders(self):
+        cols = max(1, (self._grid_widget.width() - 24) // 232)
+        if cols < 1:
+            cols = 3
+
+        for i in range(12):
+            colors = PLACEHOLDER_COLORS[i % len(PLACEHOLDER_COLORS)]
+            name = f"Ornek {i + 1}"
+            fake_path = f"placeholder_{i}"
+            card = WallpaperCard(fake_path, name)
+            card.set_placeholder(colors)
+            card.clicked.connect(lambda: None)
+            row = i // cols
+            col = i % cols
+            self._grid_layout.addWidget(card, row, col)
+            self._cards.append(card)
+
+    def _on_card_clicked(self, filepath):
+        for card in self._cards:
+            card.set_selected(card.filepath == filepath)
+
+        self._selected_path = filepath
+        name = Path(filepath).stem.replace("_", " ").replace("-", " ").title()
+        self._selected_name_label.setText(f"Secilen: {name}")
+        self._apply_btn.setEnabled(True)
+
+        pixmap = QPixmap(filepath)
+        if not pixmap.isNull():
+            self._large_preview.set_pixmap(pixmap)
+        else:
+            self._large_preview.set_placeholder(f"Secilen: {name}")
+
+    def _apply_wallpaper(self):
+        if not self._selected_path:
+            return
+
+        try:
+            result = subprocess.run(
+                ["plasma-apply-wallpaperimage", self._selected_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                self._apply_btn.setText("Uygulandi!")
+                self._apply_btn.setStyleSheet(
+                    f"""
+                    QPushButton {{
+                        background-color: #2ecc71;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 22px;
+                        font-size: 15px;
+                        font-weight: bold;
+                        padding: 0 32px;
+                    }}
+                    """
+                )
+                QTimer.singleShot(2000, self._reset_button)
+            else:
+                self._apply_btn.setText("Hata olustu")
+                self._apply_btn.setStyleSheet(
+                    f"""
+                    QPushButton {{
+                        background-color: #e74c3c;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 22px;
+                        font-size: 15px;
+                        font-weight: bold;
+                        padding: 0 32px;
+                    }}
+                    """
+                )
+                QTimer.singleShot(2000, self._reset_button)
+        except FileNotFoundError:
+            self._apply_btn.setText("Komut bulunamadi")
+            QTimer.singleShot(2000, self._reset_button)
+        except subprocess.TimeoutExpired:
+            self._apply_btn.setText("Zaman asimi")
+            QTimer.singleShot(2000, self._reset_button)
+        except Exception as e:
+            self._apply_btn.setText("Hata")
+            QTimer.singleShot(2000, self._reset_button)
+
+    def _reset_button(self):
+        self._apply_btn.setText("Uygula")
+        self._apply_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: 22px;
+                font-size: 15px;
+                font-weight: bold;
+                padding: 0 32px;
+            }}
+            QPushButton:hover {{
+                background-color: #e0549a;
+            }}
+            QPushButton:pressed {{
+                background-color: #c03878;
+            }}
+            QPushButton:disabled {{
+                background-color: {BORDER_DEFAULT};
+                color: {TEXT_SECONDARY};
+            }}
+            """
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._cards and self._selected_path is None:
+            pass
+
+    def closeEvent(self, event):
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(1000)
+        super().closeEvent(event)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    font = QFont("Sans Serif", 10)
+    app.setFont(font)
+
+    app.setStyleSheet(
+        f"""
+        QMainWindow {{
+            background-color: {BG_DARK};
+        }}
+        QWidget {{
+            color: {TEXT_PRIMARY};
+        }}
+        """
+    )
+
+    window = HirokiWallpaper()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

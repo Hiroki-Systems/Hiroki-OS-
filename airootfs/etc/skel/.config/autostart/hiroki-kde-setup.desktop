@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki KDE Setup
+Comment=Hiroki OS ilk kurulum ayarlari
+Exec=/usr/bin/hiroki-kde-setup
+Icon=preferences-desktop
+Terminal=false
+X-KDE-autostart-phase=1

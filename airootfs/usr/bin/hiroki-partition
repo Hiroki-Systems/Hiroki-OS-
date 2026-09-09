@@ -1,0 +1,1153 @@
+#!/usr/bin/env python3
+"""
+Hiroki OS - Disk Yoneticisi
+A PyQt6 disk partitioning tool for Hiroki OS.
+"""
+
+import os
+import sys
+import subprocess
+import json
+import re
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QHeaderView, QDialog, QFormLayout, QSlider, QMessageBox,
+    QGroupBox, QProgressBar, QFrame, QSizePolicy, QAbstractItemView,
+    QDialogButtonBox, QSpinBox, QCheckBox
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QPainter, QLinearGradient
+
+
+ACCENT = "#d34188"
+BG_DARK = "#111111"
+BG_WIDGET = "#1a1a1a"
+BG_INPUT = "#2a2a2a"
+TEXT_PRIMARY = "#ffffff"
+TEXT_SECONDARY = "#aaaaaa"
+BORDER_COLOR = "#333333"
+
+PARTITION_COLORS = {
+    "ext4": "#4a90d9",
+    "ext3": "#3a7bc8",
+    "btrfs": "#e67e22",
+    "xfs": "#2ecc71",
+    "fat32": "#f1c40f",
+    "vfat": "#f1c40f",
+    "ntfs": "#9b59b6",
+    "swap": "#e74c3c",
+    "linux-swap": "#e74c3c",
+    "unknown": "#666666",
+    "free": "#444444",
+    "extended": "#555555",
+    "msdos": "#8e44ad",
+    "gpt": "#3498db",
+}
+
+DARK_STYLE = f"""
+QMainWindow {{
+    background-color: {BG_DARK};
+}}
+QWidget {{
+    background-color: {BG_DARK};
+    color: {TEXT_PRIMARY};
+    font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+    font-size: 13px;
+}}
+QGroupBox {{
+    background-color: {BG_WIDGET};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    margin-top: 14px;
+    padding-top: 18px;
+    font-weight: bold;
+    font-size: 13px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: {ACCENT};
+}}
+QComboBox {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: {TEXT_PRIMARY};
+    min-height: 28px;
+    font-size: 13px;
+}}
+QComboBox:hover {{
+    border: 1px solid {ACCENT};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 24px;
+}}
+QComboBox::down-arrow {{
+    width: 10px;
+    height: 10px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER_COLOR};
+    color: {TEXT_PRIMARY};
+    selection-background-color: {ACCENT};
+    selection-color: {TEXT_PRIMARY};
+    outline: none;
+}}
+QPushButton {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    padding: 8px 18px;
+    color: {TEXT_PRIMARY};
+    font-weight: bold;
+    font-size: 13px;
+    min-height: 28px;
+}}
+QPushButton:hover {{
+    border: 1px solid {ACCENT};
+    background-color: #222;
+}}
+QPushButton:pressed {{
+    background-color: {ACCENT};
+    color: #ffffff;
+}}
+QPushButton#primaryBtn {{
+    background-color: {ACCENT};
+    border: 1px solid {ACCENT};
+    color: #ffffff;
+}}
+QPushButton#primaryBtn:hover {{
+    background-color: #e0509a;
+}}
+QPushButton#dangerBtn {{
+    background-color: #c0392b;
+    border: 1px solid #c0392b;
+    color: #ffffff;
+}}
+QPushButton#dangerBtn:hover {{
+    background-color: #e74c3c;
+}}
+QPushButton:disabled {{
+    background-color: #222;
+    color: #555;
+    border: 1px solid #333;
+}}
+QTableWidget {{
+    background-color: {BG_WIDGET};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    gridline-color: #2a2a2a;
+    color: {TEXT_PRIMARY};
+    selection-background-color: {ACCENT};
+    selection-color: {TEXT_PRIMARY};
+    font-size: 13px;
+}}
+QTableWidget::item {{
+    padding: 6px 8px;
+}}
+QTableWidget::item:selected {{
+    background-color: {ACCENT};
+}}
+QHeaderView::section {{
+    background-color: #1f1f1f;
+    border: 1px solid {BORDER_COLOR};
+    padding: 6px 10px;
+    color: {ACCENT};
+    font-weight: bold;
+    font-size: 12px;
+}}
+QScrollBar:vertical {{
+    background-color: {BG_DARK};
+    width: 10px;
+    border: none;
+}}
+QScrollBar::handle:vertical {{
+    background-color: #444;
+    border-radius: 5px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background-color: {ACCENT};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar:horizontal {{
+    background-color: {BG_DARK};
+    height: 10px;
+    border: none;
+}}
+QScrollBar::handle:horizontal {{
+    background-color: #444;
+    border-radius: 5px;
+    min-width: 30px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background-color: {ACCENT};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+QLabel {{
+    color: {TEXT_PRIMARY};
+}}
+QSlider::groove:horizontal {{
+    border: none;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+}}
+QSlider::handle:horizontal {{
+    background: {ACCENT};
+    border: none;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}}
+QSlider::handle:horizontal:hover {{
+    background: #e0509a;
+}}
+QDialog {{
+    background-color: {BG_DARK};
+}}
+QSpinBox {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: {TEXT_PRIMARY};
+    font-size: 13px;
+    min-height: 24px;
+}}
+QSpinBox:hover {{
+    border: 1px solid {ACCENT};
+}}
+QCheckBox {{
+    color: {TEXT_PRIMARY};
+    spacing: 8px;
+}}
+QCheckBox::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 3px;
+    background-color: {BG_INPUT};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {ACCENT};
+    border-color: {ACCENT};
+}}
+QProgressBar {{
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    text-align: center;
+    background-color: {BG_INPUT};
+    color: {TEXT_PRIMARY};
+    font-size: 12px;
+}}
+QProgressBar::chunk {{
+    background-color: {ACCENT};
+    border-radius: 3px;
+}}
+QMessageBox {{
+    background-color: {BG_DARK};
+}}
+"""
+
+
+def run_cmd(cmd, timeout=30):
+    """Run a command and return (returncode, stdout, stderr)."""
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", "Timeout"
+    except Exception as e:
+        return -1, "", str(e)
+
+
+def get_disks():
+    """Return list of block devices that are disks (not partitions)."""
+    rc, out, _ = run_cmd("lsblk -Jd -o NAME,SIZE,MODEL,TYPE")
+    if rc != 0:
+        return []
+    try:
+        data = json.loads(out)
+        disks = []
+        for dev in data.get("blockdevices", []):
+            if dev.get("type") == "disk":
+                name = dev.get("name", "")
+                size = dev.get("size", "")
+                model = dev.get("model", "Bilinmeyen").strip()
+                disks.append({
+                    "name": name,
+                    "path": f"/dev/{name}",
+                    "size": size,
+                    "model": model if model else "Bilinmeyen",
+                })
+        return disks
+    except json.JSONDecodeError:
+        return []
+
+
+def get_partitions(disk_name):
+    """Get partitions for a given disk."""
+    rc, out, _ = run_cmd(
+        f"lsblk -J -o NAME,SIZE,FSTYPE,MOUNTPOINT,TYPE,PARTTYPE,UUID /dev/{disk_name}"
+    )
+    if rc != 0:
+        return []
+    try:
+        data = json.loads(out)
+        partitions = []
+        for dev in data.get("blockdevices", []):
+            if dev.get("name") != disk_name:
+                continue
+            for child in dev.get("children", []):
+                partitions.append({
+                    "name": child.get("name", ""),
+                    "size": child.get("size", ""),
+                    "fstype": child.get("fstype") or "",
+                    "mountpoint": child.get("mountpoint") or "",
+                    "type": child.get("type", ""),
+                    "parttype": child.get("parttype") or "",
+                    "uuid": child.get("uuid") or "",
+                })
+        return partitions
+    except json.JSONDecodeError:
+        return []
+
+
+def get_disk_size_bytes(disk_name):
+    """Get disk size in bytes."""
+    rc, out, _ = run_cmd(f"blockdev --getsize64 /dev/{disk_name}")
+    if rc == 0:
+        try:
+            return int(out.strip())
+        except ValueError:
+            pass
+    return 0
+
+
+def bytes_to_human(b):
+    """Convert bytes to human readable string."""
+    if b <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    size = float(b)
+    while size >= 1024 and i < len(units) - 1:
+        size /= 1024
+        i += 1
+    if i == 0:
+        return f"{int(size)} {units[i]}"
+    return f"{size:.2f} {units[i]}"
+
+
+def get_running_disk():
+    """Try to identify which disk the root filesystem is on."""
+    rc, out, _ = run_cmd("findmnt -n -o SOURCE /")
+    if rc == 0:
+        dev = out.strip()
+        match = re.search(r"/dev/(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+)", dev)
+        if match:
+            dev_name = match.group(1)
+            # Strip partition number for whole disk
+            # e.g., sda1 -> sda, nvme0n1p1 -> nvme0n1
+            if "nvme" in dev_name:
+                disk = re.sub(r"p\d+$", "", dev_name)
+            else:
+                disk = re.sub(r"\d+$", "", dev_name)
+            return disk
+    return None
+
+
+def is_mounted(part_name):
+    """Check if a partition is currently mounted."""
+    rc, out, _ = run_cmd(f"findmnt -n -o SOURCE /dev/{part_name}")
+    if rc == 0 and out.strip():
+        return True
+    rc, out, _ = run_cmd(f"cat /proc/mounts | grep /dev/{part_name} ")
+    return rc == 0 and part_name in out
+
+
+def get_mounted_partitions():
+    """Get set of mounted partition device names."""
+    mounted = set()
+    rc, out, _ = run_cmd("lsblk -Jno NAME,MOUNTPOINT")
+    if rc == 0:
+        try:
+            data = json.loads(out)
+            for dev in data.get("blockdevices", []):
+                if dev.get("mountpoint"):
+                    mounted.add(dev["name"])
+                for child in dev.get("children", []):
+                    if child.get("mountpoint"):
+                        mounted.add(child["name"])
+        except json.JSONDecodeError:
+            pass
+    return mounted
+
+
+class PartitionBarWidget(QWidget):
+    """Custom widget that draws a visual representation of disk partitions."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.partitions = []
+        self.disk_size = 0
+        self.setMinimumHeight(60)
+        self.setMaximumHeight(80)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._selected_index = -1
+
+    def set_partitions(self, partitions, disk_size):
+        self.partitions = partitions
+        self.disk_size = disk_size
+        self.update()
+
+    def set_selected(self, index):
+        self._selected_index = index
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.partitions or self.disk_size <= 0:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.fillRect(self.rect(), QColor(BG_WIDGET))
+            painter.setPen(QColor("#555"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Bol ayrinti mevcut degil")
+            painter.end()
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = self.rect().adjusted(4, 4, -4, -4)
+        painter.setPen(QColor(BORDER_COLOR))
+        painter.setBrush(QColor(BG_WIDGET))
+        painter.drawRoundedRect(rect, 6, 6)
+
+        x_offset = rect.x() + 2
+        total_width = rect.width() - 4
+        avail_height = rect.height() - 2
+        y_offset = rect.y() + 1
+
+        used_sum = 0
+        part_rects = []
+        for i, p in enumerate(self.partitions):
+            p_bytes = parse_size_to_bytes(p.get("size", "0"))
+            if p_bytes <= 0:
+                continue
+            w = max(1, int((p_bytes / self.disk_size) * total_width))
+            r = QRect_helper(x_offset, y_offset, w, avail_height)
+            part_rects.append((r, p, i))
+            used_sum += p_bytes
+
+        if used_sum < self.disk_size:
+            remaining = self.disk_size - used_sum
+            w = max(1, int((remaining / self.disk_size) * total_width))
+            free_r = QRect_helper(x_offset + sum(pr[0].width() for pr in part_rects) + len(part_rects), y_offset, w, avail_height)
+            part_rects.append((free_r, {"name": "Bos Alan", "fstype": "free"}, -1))
+
+        for r, p, idx in part_rects:
+            fstype = p.get("fstype", "unknown")
+            if fstype == "free":
+                color = QColor(PARTITION_COLORS["free"])
+            else:
+                color = QColor(PARTITION_COLORS.get(fstype, PARTITION_COLORS["unknown"]))
+
+            if idx == self._selected_index:
+                color = color.lighter(140)
+
+            painter.fillRect(r, color)
+            if idx == self._selected_index:
+                painter.setPen(QPen(QColor(ACCENT), 2))
+                painter.drawRect(r)
+
+            painter.setPen(QColor("#ffffff"))
+            if r.width() > 40:
+                font = painter.font()
+                font.setPixelSize(10)
+                painter.setFont(font)
+                label = p.get("name", "")
+                painter.drawText(r.adjusted(4, 0, -4, 0),
+                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                                 label)
+                if r.width() > 90:
+                    size_text = p.get("size", "")
+                    painter.drawText(r.adjusted(4, 0, -4, 0),
+                                     Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                                     size_text)
+
+        painter.end()
+
+
+def QRect_helper(x, y, w, h):
+    from PyQt6.QtCore import QRect
+    return QRect(x, y, max(1, w), max(1, h))
+
+
+def parse_size_to_bytes(size_str):
+    """Parse a size string like '50G', '512M', '1024K' to bytes."""
+    size_str = size_str.strip().upper()
+    multipliers = {
+        'T': 1024 ** 4,
+        'G': 1024 ** 3,
+        'M': 1024 ** 2,
+        'K': 1024,
+        'B': 1,
+    }
+    for suffix, mult in multipliers.items():
+        if size_str.endswith(suffix):
+            try:
+                return int(float(size_str[:-1]) * mult)
+            except ValueError:
+                return 0
+    try:
+        return int(size_str)
+    except ValueError:
+        return 0
+
+
+class WorkerThread(QThread):
+    """Run a shell command in a background thread."""
+    finished = pyqtSignal(int, str, str)
+
+    def __init__(self, cmd, parent=None):
+        super().__init__(parent)
+        self.cmd = cmd
+
+    def run(self):
+        rc, out, err = run_cmd(self.cmd, timeout=120)
+        self.finished.emit(rc, out, err)
+
+
+class CreatePartitionDialog(QDialog):
+    """Dialog for creating a new partition."""
+
+    def __init__(self, disk_path, free_space_str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Yeni Bolustur")
+        self.setMinimumWidth(420)
+        self.setModal(True)
+        self.disk_path = disk_path
+        self.free_bytes = parse_size_to_bytes(free_space_str)
+        self.free_space_str = free_space_str
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        header = QLabel("Yeni Bolustur Olustur")
+        header.setStyleSheet(f"color: {ACCENT}; font-size: 16px; font-weight: bold;")
+        layout.addWidget(header)
+
+        info = QLabel(f"Bos alan: {free_space_str}")
+        info.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.size_slider.setMinimum(1)
+        self.size_slider.setMaximum(1000)
+        self.size_slider.setValue(1000)
+        self.size_slider.setTickPosition(QSlider.TickPosition.NoTicks)
+        self.size_slider.valueChanged.connect(self._update_size_label)
+
+        self.size_label = QLabel(f"{free_space_str} (tum alan)")
+        self.size_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+
+        size_widget = QWidget()
+        size_layout = QVBoxLayout(size_widget)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        size_layout.addWidget(self.size_slider)
+        size_layout.addWidget(self.size_label)
+        form.addRow("Boyut (MB):", size_widget)
+
+        self.fs_combo = QComboBox()
+        self.fs_combo.addItems(["ext4", "btrfs", "xfs", "fat32", "ntfs", "swap"])
+        form.addRow("Dosya Sistemi:", self.fs_combo)
+
+        self.mount_input = QComboBox()
+        self.mount_input.setEditable(True)
+        self.mount_input.addItems(["", "/mnt", "/home", "/boot", "/data", "/var", "/tmp", "/opt"])
+        self.mount_input.setCurrentText("")
+        form.addRow("Mount Noktasi:", self.mount_input)
+
+        self.label_input = QComboBox()
+        self.label_input.setEditable(True)
+        self.label_input.addItems(["", "HirokiOS", "Data", "Backup", "Games", "Work"])
+        self.label_input.setCurrentText("")
+        form.addRow("Etiket:", self.label_input)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        for btn in buttons.buttons():
+            if buttons.buttonRole(btn) == QDialogButtonBox.ButtonRole.AcceptRole:
+                btn.setObjectName("primaryBtn")
+                btn.setText("Olustur")
+            else:
+                btn.setText("Iptal")
+        layout.addWidget(buttons)
+
+        self.setStyleSheet(DARK_STYLE)
+
+    def _update_size_label(self, val):
+        if self.free_bytes <= 0:
+            return
+        mb = int(self.free_bytes / (1024 * 1024) * val / 1000)
+        if mb >= 1024:
+            gb = mb / 1024
+            self.size_label.setText(f"{gb:.2f} GB")
+        else:
+            self.size_label.setText(f"{mb} MB")
+
+    def get_values(self):
+        mb = int(self.free_bytes / (1024 * 1024) * self.size_slider.value() / 1000)
+        return {
+            "size_mb": mb,
+            "fs_type": self.fs_combo.currentText(),
+            "mount": self.mount_input.currentText().strip(),
+            "label": self.label_input.currentText().strip(),
+        }
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Disk Yoneticisi")
+        self.setMinimumSize(750, 550)
+        self.resize(900, 620)
+        self.selected_disk = None
+        self.partitions_data = []
+        self.disk_size = 0
+        self.running_disk = get_running_disk()
+        self._worker = None
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(16, 12, 16, 12)
+        main_layout.setSpacing(10)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Disk Yoneticisi")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 22px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        self.disk_info_label = QLabel("")
+        self.disk_info_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        header_layout.addWidget(self.disk_info_label)
+        main_layout.addLayout(header_layout)
+
+        # Disk selector
+        selector_layout = QHBoxLayout()
+        selector_label = QLabel("Disk Secin:")
+        selector_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        selector_layout.addWidget(selector_label)
+
+        self.disk_combo = QComboBox()
+        self.disk_combo.setMinimumWidth(300)
+        self.disk_combo.currentIndexChanged.connect(self._on_disk_changed)
+        selector_layout.addWidget(self.disk_combo)
+
+        selector_layout.addStretch()
+
+        self.refresh_btn = QPushButton("Yenile")
+        self.refresh_btn.setIcon(QIcon())
+        self.refresh_btn.clicked.connect(self.refresh_disks)
+        selector_layout.addWidget(self.refresh_btn)
+
+        main_layout.addLayout(selector_layout)
+
+        # Partition bar
+        bar_group = QGroupBox("Bol ayrintisi gorseli")
+        bar_layout = QVBoxLayout(bar_group)
+        self.partition_bar = PartitionBarWidget()
+        bar_layout.addWidget(self.partition_bar)
+        main_layout.addWidget(bar_group)
+
+        # Table
+        table_group = QGroupBox("Bol ayrintisi")
+        table_layout = QVBoxLayout(table_group)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(
+            ["Bolum Adi", "Boyut", "Tur", "Mount Noktasi", "Dosya Sistemi", "UUID"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setMinimumHeight(180)
+        self.table.currentCellChanged.connect(self._on_row_changed)
+
+        table_layout.addWidget(self.table)
+        main_layout.addWidget(table_group)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        self.create_btn = QPushButton("Bolustur")
+        self.create_btn.setObjectName("primaryBtn")
+        self.create_btn.clicked.connect(self._create_partition)
+
+        self.delete_btn = QPushButton("Sil")
+        self.delete_btn.setObjectName("dangerBtn")
+        self.delete_btn.clicked.connect(self._delete_partition)
+
+        self.format_btn = QPushButton("Bi Formatting")
+        self.format_btn.clicked.connect(self._format_partition)
+
+        self.mount_btn = QPushButton("Bagla")
+        self.mount_btn.clicked.connect(self._mount_partition)
+
+        btn_layout.addWidget(self.create_btn)
+        btn_layout.addWidget(self.delete_btn)
+        btn_layout.addWidget(self.format_btn)
+        btn_layout.addWidget(self.mount_btn)
+        btn_layout.addStretch()
+
+        main_layout.addLayout(btn_layout)
+
+        # Status bar area
+        self.status_label = QLabel("Hazir")
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 4px;")
+        main_layout.addWidget(self.status_label)
+
+        self.setStyleSheet(DARK_STYLE)
+        self.refresh_disks()
+
+    def refresh_disks(self):
+        self.status_label.setText("Diskler taraniyor...")
+        self.disk_combo.blockSignals(True)
+        self.disk_combo.clear()
+        disks = get_disks()
+        self._disks = disks
+        for d in disks:
+            self.disk_combo.addItem(f"{d['path']}  -  {d['size']}  ({d['model']})", d['name'])
+        self.disk_combo.blockSignals(False)
+        if self.disk_combo.count() > 0:
+            self.disk_combo.setCurrentIndex(0)
+            self._on_disk_changed(0)
+        else:
+            self.status_label.setText("Disk bulunamadi.")
+        self._update_btn_states()
+
+    def _on_disk_changed(self, index):
+        if index < 0 or index >= len(self._disks):
+            return
+        disk = self._disks[index]
+        self.selected_disk = disk["name"]
+        self.disk_size = get_disk_size_bytes(self.selected_disk)
+        self.disk_info_label.setText(
+            f"Toplam: {disk['size']}  |  Model: {disk['model']}  |  "
+            f"Boyut: {bytes_to_human(self.disk_size)}"
+        )
+        self._load_partitions()
+
+    def _load_partitions(self):
+        if not self.selected_disk:
+            return
+        self.status_label.setText(f"/dev/{self.selected_disk} taraniyor...")
+        self.partitions_data = get_partitions(self.selected_disk)
+
+        # Compute free space by subtracting partition sizes from disk size
+        used = 0
+        for p in self.partitions_data:
+            used += parse_size_to_bytes(p.get("size", "0"))
+        free = max(0, self.disk_size - used)
+
+        # Add free space entry if meaningful
+        display_partitions = list(self.partitions_data)
+        if free > 1024 * 1024:  # more than 1MB free
+            display_partitions.append({
+                "name": "Bos Alan",
+                "size": bytes_to_human(free),
+                "fstype": "",
+                "mountpoint": "",
+                "type": "free",
+                "parttype": "",
+                "uuid": "",
+            })
+
+        self.partition_bar.set_partitions(display_partitions, self.disk_size)
+
+        self.table.setRowCount(0)
+        mounted = get_mounted_partitions()
+        for p in self.partitions_data:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            is_mnt = p["name"] in mounted
+
+            name_item = QTableWidgetItem(p["name"])
+            if is_mnt:
+                name_item.setForeground(QColor("#00cc66"))
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, QTableWidgetItem(p.get("size", "")))
+
+            ptype = p.get("parttype", "")
+            if ptype:
+                ptype_display = ptype
+            else:
+                ptype_display = "normal"
+            self.table.setItem(row, 2, QTableWidgetItem(ptype_display))
+
+            mnt_item = QTableWidgetItem(p.get("mountpoint", ""))
+            if is_mnt:
+                mnt_item.setForeground(QColor("#00cc66"))
+            self.table.setItem(row, 3, mnt_item)
+
+            self.table.setItem(row, 4, QTableWidgetItem(p.get("fstype", "")))
+            self.table.setItem(row, 5, QTableWidgetItem(p.get("uuid", "")))
+
+        self.status_label.setText(
+            f"{len(self.partitions_data)} bol ayrinti bulundu  |  "
+            f"Bos alan: {bytes_to_human(free)}"
+        )
+        self._update_btn_states()
+
+    def _on_row_changed(self, current_row, previous_row):
+        self.partition_bar.set_selected(-1)
+        if current_row >= 0 and current_row < len(self.partitions_data):
+            self.partition_bar.set_selected(current_row)
+        self._update_btn_states()
+
+    def _get_selected_partition(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.partitions_data):
+            return None
+        return self.partitions_data[row]
+
+    def _is_running_system_disk(self):
+        return self.selected_disk == self.running_disk
+
+    def _update_btn_states(self):
+        part = self._get_selected_partition()
+        has_sel = part is not None
+        self.create_btn.setEnabled(self.selected_disk is not None)
+        self.delete_btn.setEnabled(has_sel)
+        self.format_btn.setEnabled(has_sel)
+        self.mount_btn.setEnabled(has_sel)
+
+    def _show_warning(self, title, message):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        for btn in msg.buttons():
+            if msg.buttonRole(btn) == QMessageBox.ButtonRole.YesRole:
+                btn.setStyleSheet(f"background-color: {ACCENT}; color: white; border: 1px solid {ACCENT}; padding: 6px 16px; border-radius: 4px;")
+        msg.setStyleSheet(DARK_STYLE)
+        return msg.exec()
+
+    def _show_info(self, title, message):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setStyleSheet(DARK_STYLE)
+        msg.exec()
+
+    def _show_error(self, title, message):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setStyleSheet(DARK_STYLE)
+        msg.exec()
+
+    def _run_cmd_async(self, cmd, callback):
+        """Run a command asynchronously and call callback when done."""
+        self.status_label.setText("Komut calistiriliyor...")
+        self._worker = WorkerThread(cmd)
+        self._worker.finished.connect(lambda rc, out, err: self._on_cmd_finished(rc, out, err, callback))
+        self._worker.start()
+
+    def _on_cmd_finished(self, rc, out, err, callback):
+        self._worker = None
+        callback(rc, out, err)
+        self._load_partitions()
+
+    def _create_partition(self):
+        if not self.selected_disk:
+            return
+
+        if self._is_running_system_disk():
+            self._show_error("Hata", "Bu disk calisan sistem diski. Uzerinde bol ayrinti olusturulamaz.")
+            return
+
+        # Calculate free space
+        used = 0
+        for p in self.partitions_data:
+            used += parse_size_to_bytes(p.get("size", "0"))
+        free = max(0, self.disk_size - used)
+        if free < 1024 * 1024:
+            self._show_error("Hata", "Diskte yeterli bos alan yok.")
+            return
+
+        dialog = CreatePartitionDialog(f"/dev/{self.selected_disk}", bytes_to_human(free), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        vals = dialog.get_values()
+        if vals["size_mb"] <= 0:
+            self._show_error("Hata", "Gecersiz boyut.")
+            return
+
+        size_bytes = vals["size_mb"] * 1024 * 1024
+        if size_bytes > free:
+            self._show_error("Hata", f"Istenen boyut ({bytes_to_human(size_bytes)}) bos alandan buyuk.")
+            return
+
+        confirm = self._show_warning(
+            "Onay",
+            f"/dev/{self.selected_disk} uzerinde {vals['size_mb']} MB boyutunda "
+            f"{vals['fs_type']} bol ayrinti olusturulacak.\n\n"
+            f"Devam etmek istediginizden emin misiniz?"
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        # Use sfdisk to create partition
+        # Get partition count to determine next partition number
+        part_count = len(self.partitions_data)
+        next_num = part_count + 1
+
+        if self.selected_disk.startswith("nvme"):
+            part_name = f"{self.selected_disk}p{next_num}"
+        else:
+            part_name = f"{self.selected_disk}{next_num}"
+
+        # Create partition with sfdisk
+        size_sectors = vals["size_mb"] * 1024 * 2  # 512 byte sectors
+        cmd = (
+            f'echo ",+{size_sectors}s,{vals["fs_type"]}" | '
+            f'sfdisk --append --no-reread --force /dev/{self.selected_disk}'
+        )
+
+        self._run_cmd_async(cmd, lambda rc, out, err: self._on_create_done(rc, out, err, vals, part_name))
+
+    def _on_create_done(self, rc, out, err, vals, part_name):
+        if rc != 0:
+            self._show_error("Hata", f"Bolusturme basarisiz:\n{err or out}")
+            return
+
+        # Wait for kernel to re-read partition table
+        run_cmd(f"partprobe /dev/{self.selected_disk}", timeout=10)
+
+        # Format if needed
+        if vals["fs_type"] != "swap" and vals["fs_type"] != "":
+            self._format_partition_internal(part_name, vals["fs_type"], vals.get("label", ""))
+        else:
+            if vals["fs_type"] == "swap":
+                self._run_cmd_async(
+                    f"mkswap /dev/{part_name}",
+                    lambda rc, out, err: self._show_format_result(rc, out, err, part_name)
+                )
+
+    def _format_partition(self):
+        part = self._get_selected_partition()
+        if not part:
+            return
+
+        if self._is_running_system_disk():
+            self._show_error("Hata", "Calisan sistem diski uzerinde islem yapilamaz.")
+            return
+
+        mounted = get_mounted_partitions()
+        if part["name"] in mounted:
+            self._show_error("Hata", f"/dev/{part['name']} su an bagli. Once baglantiyi kesin.")
+            return
+
+        from PyQt6.QtWidgets import QInputDialog
+        fs_types = ["ext4", "btrfs", "xfs", "fat32", "ntfs"]
+        fs_type, ok = QInputDialog.getItem(
+            self, "Dosya Sistemi Sec", f"/dev/{part['name']} icin dosya sistemi:", fs_types, 0, False
+        )
+        if not ok:
+            return
+
+        confirm = self._show_warning(
+            "Onay - Bi Formatting",
+            f"/dev/{part['name']} uzerindeki tum veriler silinecek ve {fs_type} olarak bi formatlacak.\n\n"
+            f"Bu islem geri alinamaz. Devam etmek istediginizden emin misiniz?"
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        self._format_partition_internal(part["name"], fs_type, "")
+
+    def _format_partition_internal(self, part_name, fs_type, label=""):
+        label_arg = f'-L "{label}"' if label else ""
+        if fs_type == "fat32":
+            cmd = f"mkfs.vfat -F 32 {label_arg} /dev/{part_name}"
+        elif fs_type == "ntfs":
+            cmd = f"mkfs.ntfs -f {label_arg} /dev/{part_name}"
+        elif fs_type == "btrfs":
+            cmd = f"mkfs.btrfs -f {label_arg} /dev/{part_name}"
+        elif fs_type == "xfs":
+            cmd = f"mkfs.xfs -f {label_arg} /dev/{part_name}"
+        elif fs_type == "swap":
+            cmd = f"mkswap /dev/{part_name}"
+        else:
+            cmd = f"mkfs.ext4 -F {label_arg} /dev/{part_name}"
+
+        self._run_cmd_async(cmd, lambda rc, out, err: self._show_format_result(rc, out, err, part_name))
+
+    def _show_format_result(self, rc, out, err, part_name):
+        if rc == 0:
+            self._show_info("Basarili", f"/dev/{part_name} basariyla bi formatlandi.")
+        else:
+            self._show_error("Hata", f"Bi formatlama basarisiz:\n{err or out}")
+
+    def _delete_partition(self):
+        part = self._get_selected_partition()
+        if not part:
+            return
+
+        if self._is_running_system_disk():
+            self._show_error("Hata", "Calisan sistem diski uzerindeki bol ayrintiler silinemez.")
+            return
+
+        mounted = get_mounted_partitions()
+        if part["name"] in mounted:
+            self._show_error("Hata", f"/dev/{part['name']} bagli. Once baglantiyi kesin.")
+            return
+
+        confirm = self._show_warning(
+            "Onay - Bolustur Silme",
+            f"/dev/{part['name']} kalici olarak silinecek.\n"
+            f"Boyut: {part.get('size', 'Bilinmiyor')}\n"
+            f"Tur: {part.get('fstype', 'Bilinmiyor')}\n\n"
+            f"Bu islem geri alinamaz. Devam etmek istediginizden emin misiniz?"
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        # Determine partition number
+        part_name = part["name"]
+        if self.selected_disk in part_name:
+            num = part_name.replace(self.selected_disk, "").replace("p", "")
+        else:
+            num = re.sub(r"[a-z]+", "", part_name)
+
+        # Use sfdisk to delete
+        cmd = f"echo '{num}' | sfdisk --delete /dev/{self.selected_disk}"
+        self._run_cmd_async(cmd, lambda rc, out, err: self._on_delete_done(rc, out, err))
+
+    def _on_delete_done(self, rc, out, err):
+        if rc == 0:
+            run_cmd(f"partprobe /dev/{self.selected_disk}", timeout=10)
+            self._show_info("Basarili", "Bol ayrinti basariyla silindi.")
+        else:
+            self._show_error("Hata", f"Silme basarisiz:\n{err or out}")
+
+    def _mount_partition(self):
+        part = self._get_selected_partition()
+        if not part:
+            return
+
+        if not part.get("fstype"):
+            self._show_error("Hata", "Bu bol ayrinti uzerinde dosya sistemi yok.")
+            return
+
+        mounted = get_mounted_partitions()
+        if part["name"] in mounted:
+            # Unmount
+            confirm = self._show_warning(
+                "Onay - Baglantiyi Kes",
+                f"/dev/{part['name']} su an bagli. Baglantiyi kesmek istediginize emin misiniz?"
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            cmd = f"umount /dev/{part['name']}"
+            self._run_cmd_async(cmd, lambda rc, out, err: self._on_unmount_done(rc, out, err, part["name"]))
+        else:
+            # Mount
+            default_mount = f"/mnt/{part['name']}"
+            from PyQt6.QtWidgets import QInputDialog
+            mount_point, ok = QInputDialog.getText(
+                self, "Bagla", f"/dev/{part['name']} icin mount noktasi:", text=default_mount
+            )
+            if not ok or not mount_point.strip():
+                return
+            mount_point = mount_point.strip()
+
+            # Create mount point if it doesn't exist
+            run_cmd(f"mkdir -p {mount_point}")
+
+            cmd = f"mount /dev/{part['name']} {mount_point}"
+            self._run_cmd_async(cmd, lambda rc, out, err: self._on_mount_done(rc, out, err, mount_point))
+
+    def _on_mount_done(self, rc, out, err, mount_point):
+        if rc == 0:
+            self._show_info("Basarili", f"Bol ayrinti {mount_point} konumuna baglandi.")
+        else:
+            self._show_error("Hata", f"Baglama basarisiz:\n{err or out}")
+
+    def _on_unmount_done(self, rc, out, err, part_name):
+        if rc == 0:
+            self._show_info("Basarili", f"/dev/{part_name} baglantisi kesildi.")
+        else:
+            self._show_error("Hata", f"Baglanti kesme basarisiz:\n{err or out}")
+
+    def closeEvent(self, event):
+        if self._worker and self._worker.isRunning():
+            self._worker.terminate()
+            self._worker.wait(2000)
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_INPUT))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_WIDGET))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_WIDGET))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BG_INPUT))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

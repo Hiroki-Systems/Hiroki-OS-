@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Snapshot
+Name[tr]=Hiroki Snapshot
+Comment=Sistem geri yukleme noktalarini yonetin
+Comment[tr]=Sistem geri yukleme noktalarini yonetin
+Exec=hiroki-snapshot
+Icon=drive-harddisk
+Terminal=false
+Categories=System;
+StartupNotify=true

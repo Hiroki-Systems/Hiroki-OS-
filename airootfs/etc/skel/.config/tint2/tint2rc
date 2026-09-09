@@ -1,0 +1,124 @@
+# Tokyo Night tint2 panel config
+# Alt bar — modern, minimal, transparent
+
+# ------------------------------------------------------------------
+# Panel
+# ------------------------------------------------------------------
+panel_monitor = all
+panel_position = bottom center horizontal
+panel_size = 100% 36
+panel_margin = 0 0
+panel_padding = 8 0 8
+panel_dock = off
+panel_layer = top
+wm_menu = off
+panel_background_id = 1
+
+# ------------------------------------------------------------------
+# Taskbar
+# ------------------------------------------------------------------
+taskbar_mode = single_desktop
+taskbar_padding = 6 4 6
+taskbar_background_id = 0
+taskbar_active_background_id = 0
+
+taskbar_name = off
+taskbar_name_padding = 4 2
+taskbar_name_background_id = 0
+taskbar_name_active_background_id = 0
+taskbar_name_font = sans bold 10
+taskbar_name_font_color = #c0caf5 100
+taskbar_name_active_font_color = #7aa2f7 100
+
+task_icon = on
+task_icon_size = 20
+task_text = on
+task_centered = on
+task_maximum_size = 180 36
+task_padding = 6 3 6
+task_tooltip = on
+task_font = sans 10
+task_font_color = #c0caf5 80
+task_icon_asb = 100 0 0
+task_active_font_color = #c0caf5 100
+task_active_icon_asb = 100 0 0
+task_urgent_font_color = #f7768e 100
+task_urgent_icon_asb = 100 0 0
+
+# ------------------------------------------------------------------
+# System tray
+# ------------------------------------------------------------------
+systray = on
+systray_padding = 4 4 4
+systray_sort = ascending
+systray_background_id = 0
+systray_icon_size = 20
+systray_icon_asb = 100 0 0
+
+# ------------------------------------------------------------------
+# Clock
+# ------------------------------------------------------------------
+time1_format = %H:%M
+time1_font = monospace bold 13
+time2_format = %d %b
+time2_font = sans 9
+clock_font_color = #c0caf5 100
+clock_padding = 8 0
+clock_background_id = 0
+clock_lclick_command = gsimplecal
+clock_tooltip = %A, %d %B %Y
+
+# ------------------------------------------------------------------
+# Battery
+# ------------------------------------------------------------------
+battery = on
+battery_font_color = #c0caf5 100
+battery_padding = 4 0
+battery_background_id = 0
+bat1_format = %p%%
+bat1_font = sans 10
+
+# ------------------------------------------------------------------
+# Tooltip
+# ------------------------------------------------------------------
+tooltip_show_timeout = 0.5
+tooltip_hide_timeout = 0.2
+tooltip_padding = 8 4
+tooltip_background_id = 1
+tooltip_font = sans 10
+tooltip_font_color = #c0caf5 100
+
+# ------------------------------------------------------------------
+# Mouse actions on taskbar
+# ------------------------------------------------------------------
+mouse_left = toggle_iconify
+mouse_middle = none
+mouse_right = close
+mouse_scroll_up = toggle
+mouse_scroll_down = iconify
+
+# ------------------------------------------------------------------
+# Backgrounds
+# ------------------------------------------------------------------
+
+# BG 0 — transparent
+rounded = 0
+border_width = 0
+border_sides = TBLR
+background_color = #16161e 95
+border_color = #1a1b26 60
+background_color_hover = #1a1b26 95
+border_color_hover = #1a1b26 60
+background_color_pressed = #1a1b26 95
+border_color_pressed = #1a1b26 60
+
+# BG 1 — tooltip/task bg
+rounded = 6
+border_width = 1
+border_sides = TBLR
+background_color = #1a1b26 95
+border_color = #3b4261 60
+background_color_hover = #1a1b26 95
+border_color_hover = #7aa2f7 60
+background_color_pressed = #1a1b26 95
+border_color_pressed = #7aa2f7 60

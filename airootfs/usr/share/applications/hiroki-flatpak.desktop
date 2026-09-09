@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Uygulama Magazasi
+Name[tr]=Hiroki Uygulama Magazasi
+Comment=Flatpak uygulama magazasi
+Comment[tr]=Flatpak uygulama magazasi
+Exec=hiroki-flatpak
+Icon=system-software-install
+Terminal=false
+Categories=System;
+StartupNotify=true

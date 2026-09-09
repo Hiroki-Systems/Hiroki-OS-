@@ -1,0 +1,41 @@
+#!/bin/bash
+# Hiroki OS - Guncelleme oncesi snapshot
+# hiroki-update tarafindan cagrilir
+
+SETTINGS="/etc/hiroki/snapshot-settings.json"
+LOG="/var/log/hiroki-snapshot.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
+}
+
+# Ayarlari oku
+if [ ! -f "$SETTINGS" ]; then
+    echo "true"
+    exit 0
+fi
+
+PRE_UPDATE=$(python3 -c "import json; d=json.load(open('$SETTINGS')); print(d.get('pre_update_snapshot', True))" 2>/dev/null)
+
+if [ "$PRE_UPDATE" != "True" && "$PRE_UPDATE" != "true" ]; then
+    echo "false"
+    exit 0
+fi
+
+if ! command -v timeshift &>/dev/null; then
+    log "Timeshift yuklu degil, snapshot alinamiyor."
+    echo "error"
+    exit 1
+fi
+
+log "Guncelleme oncesi snapshot aliniyor..."
+timeshift --create --comments "Hiroki guncelleme oncesi" --yes 2>>"$LOG"
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+    log "Guncelleme oncesi snapshot basariyla olusturuldu."
+    echo "ok"
+else
+    log "Guncelleme oncesi snapshot hatasi (kod: $EXIT_CODE)."
+    echo "error"
+fi

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ac Beni
+Name[tr]=Ac Beni
+Comment=Ac ve oku
+Exec=hiroki-acbeni
+Icon=text-editor
+Terminal=false
+Categories=Utility;
+StartupNotify=true

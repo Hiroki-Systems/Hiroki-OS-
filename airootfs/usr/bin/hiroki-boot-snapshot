@@ -1,0 +1,39 @@
+#!/bin/bash
+# Hiroki OS - Boot Snapshot (90 saniye sonra calisir)
+# Ayarlara bakarak snapshot alir
+
+SETTINGS="/etc/hiroki/snapshot-settings.json"
+LOG="/var/log/hiroki-snapshot.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
+}
+
+# Ayarlari oku
+if [ ! -f "$SETTINGS" ]; then
+    log "Ayar dosyasi bulunamadi, snapshot alinmiyor."
+    exit 0
+fi
+
+BOOT_SNAP=$(python3 -c "import json; d=json.load(open('$SETTINGS')); print(d.get('boot_snapshot_90s', False))" 2>/dev/null)
+
+if [ "$BOOT_SNAP" != "True" ] && [ "$BOOT_SNAP" != "true" ]; then
+    log "Boot snapshot kapali, atlaniyor."
+    exit 0
+fi
+
+# Timeshift var mi kontrol
+if ! command -v timeshift &>/dev/null; then
+    log "Timeshift yuklu degil."
+    exit 1
+fi
+
+log "Boot snapshot aliniyor..."
+timeshift --create --comments "Hiroki otomatik acilis snapshoti" --yes 2>>"$LOG"
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+    log "Boot snapshot basariyla olusturuldu."
+else
+    log "Boot snapshot hatasi (kod: $EXIT_CODE)."
+fi

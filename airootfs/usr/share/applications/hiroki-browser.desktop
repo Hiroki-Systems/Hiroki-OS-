@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Hiroki Browser
+Comment=Hafif WebView Tarayıcı
+Exec=hiroki-browser %u
+Icon=web-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true

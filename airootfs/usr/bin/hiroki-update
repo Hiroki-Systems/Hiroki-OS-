@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Hiroki OS - Guncelleme Merkezi (PyQt6) - Terminal tabanli guncelleme"""
+
+import sys
+import os
+import subprocess
+import re
+import json
+from datetime import datetime
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QFrame, QMessageBox, QTextEdit, QCheckBox
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont, QColor, QPalette, QTextCursor
+
+ACCENT = "#d34188"
+BG_MAIN = "#111111"
+BG_CARD = "#1a1a1a"
+BG_TERMINAL = "#0a0a0a"
+TEXT_PRIMARY = "#e0e0e0"
+TEXT_SECONDARY = "#888888"
+TEXT_DIM = "#555555"
+BORDER_COLOR = "#2a2a2a"
+SUCCESS_COLOR = "#4caf50"
+ERROR_COLOR = "#f44336"
+WARNING_COLOR = "#ff9800"
+
+STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {BG_MAIN};
+    color: {TEXT_PRIMARY};
+}}
+QLabel {{
+    color: {TEXT_PRIMARY};
+}}
+QPushButton {{
+    background-color: #1e1e1e;
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 5px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: bold;
+}}
+QPushButton:hover {{
+    background-color: #252525;
+    border-color: {ACCENT};
+}}
+QPushButton:pressed {{
+    background-color: #2a1a2a;
+}}
+QPushButton:disabled {{
+    background-color: #151515;
+    color: {TEXT_DIM};
+    border-color: #222;
+}}
+QPushButton#accentButton {{
+    background-color: {ACCENT};
+    color: #ffffff;
+    border: none;
+}}
+QPushButton#accentButton:hover {{
+    background-color: #e0509a;
+}}
+QPushButton#accentButton:disabled {{
+    background-color: #442233;
+    color: #666;
+}}
+QPushButton#checkButton {{
+    background-color: #111a11;
+    color: {SUCCESS_COLOR};
+    border: 1px solid #223322;
+}}
+QPushButton#checkButton:hover {{
+    background-color: #182818;
+    border-color: {SUCCESS_COLOR};
+}}
+QPushButton#dangerButton {{
+    background-color: #331111;
+    color: {ERROR_COLOR};
+    border: 1px solid #552222;
+}}
+QPushButton#dangerButton:hover {{
+    background-color: #441818;
+}}
+QTextEdit#terminal {{
+    background-color: {BG_TERMINAL};
+    color: #00ff00;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 13px;
+    selection-background-color: #333;
+}}
+QCheckBox {{
+    color: {TEXT_PRIMARY};
+    spacing: 6px;
+    font-size: 13px;
+}}
+QCheckBox::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 2px solid {BORDER_COLOR};
+    border-radius: 3px;
+    background-color: {BG_CARD};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {ACCENT};
+    border-color: {ACCENT};
+}}
+"""
+
+
+class CheckWorker(QThread):
+    check_done = pyqtSignal(list, str)
+    check_error = pyqtSignal(str)
+
+    def run(self):
+        try:
+            subprocess.run(["pacman", "-Sy"], capture_output=True, text=True, timeout=60)
+            result = subprocess.run(["pacman", "-Qu"], capture_output=True, text=True, timeout=60)
+            packages = []
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    if not line.strip() or line.startswith("::") or line.startswith("warning"):
+                        continue
+                    parts = line.split()
+                    if "->" in line:
+                        arrow_idx = parts.index("->")
+                        name = parts[arrow_idx - 1]
+                        new_ver = parts[arrow_idx + 1]
+                        packages.append((name, new_ver))
+            now = datetime.now().strftime("%d.%m.%Y %H:%M")
+            self.check_done.emit(packages, now)
+        except Exception as e:
+            self.check_error.emit(str(e))
+
+
+class UpdateWorker(QThread):
+    output_line = pyqtSignal(str)
+    update_done = pyqtSignal(bool, str)
+
+    def run(self):
+        try:
+            process = subprocess.Popen(
+                ["pacman", "-Syu", "--noconfirm"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            for line in iter(process.stdout.readline, ""):
+                if line:
+                    self.output_line.emit(line.rstrip("\n"))
+            process.wait()
+            if process.returncode == 0:
+                self.update_done.emit(True, "Guncelleme basariyla tamamlandi!")
+            else:
+                self.update_done.emit(False, f"Guncelleme hatasi (kod: {process.returncode})")
+        except Exception as e:
+            self.update_done.emit(False, str(e))
+
+
+class SnapshotWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def run(self):
+        try:
+            result = subprocess.run(
+                ["pkexec", "timeshift", "--create", "--comments", "Hiroki guncelleme oncesi", "--yes"],
+                capture_output=True, text=True, timeout=180
+            )
+            if result.returncode == 0:
+                self.done.emit(True, "Snapshot alindi!")
+            else:
+                self.done.emit(False, result.stderr.strip() or "Snapshot alinamadi.")
+        except Exception as e:
+            self.done.emit(False, str(e))
+
+
+class HirokiUpdateWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Guncelleme Merkezi")
+        self.setMinimumSize(700, 500)
+        self.resize(820, 600)
+        self.packages = []
+        self.check_worker = None
+        self.update_worker = None
+        self.snapshot_worker = None
+
+        self._init_ui()
+        self.setStyleSheet(STYLESHEET)
+
+    def _init_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        top_bar = self._build_top_bar()
+        main_layout.addWidget(top_bar)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background-color: {ACCENT}; max-height: 2px; border: none;")
+        main_layout.addWidget(sep)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 12, 16, 8)
+        content_layout.setSpacing(8)
+
+        self.info_label = QLabel(
+            'Paketleri guncellemek icin "Kontrol Et" butonuna basin, '
+            'ardindan "Guncelle" ile isleme baslayin.\n'
+            'Guncelleme oncesi otomatik snapshot alinir.'
+        )
+        self.info_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 4px 0;")
+        self.info_label.setWordWrap(True)
+        content_layout.addWidget(self.info_label)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 4px 0;")
+        content_layout.addWidget(self.status_label)
+
+        self.terminal = QTextEdit()
+        self.terminal.setObjectName("terminal")
+        self.terminal.setReadOnly(True)
+        self.terminal.setFont(QFont("Monospace", 12))
+        self.terminal.setPlaceholderText("Guncelleme ciktisi burada gorunecek...")
+        content_layout.addWidget(self.terminal, 1)
+
+        main_layout.addWidget(content, 1)
+
+        bottom_bar = self._build_bottom_bar()
+        main_layout.addWidget(bottom_bar)
+
+    def _build_top_bar(self):
+        widget = QWidget()
+        widget.setStyleSheet(f"background-color: {BG_CARD}; border-bottom: 1px solid {BORDER_COLOR};")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(16, 12, 16, 12)
+
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(2)
+        title = QLabel("Guncelleme Merkezi")
+        title.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {ACCENT}; background: transparent;")
+        title_layout.addWidget(title)
+
+        self.last_label = QLabel("")
+        self.last_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
+        title_layout.addWidget(self.last_label)
+
+        layout.addLayout(title_layout)
+        layout.addStretch()
+
+        self.check_btn = QPushButton("Kontrol Et")
+        self.check_btn.setObjectName("checkButton")
+        self.check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_btn.clicked.connect(self.on_check)
+        layout.addWidget(self.check_btn)
+
+        return widget
+
+    def _build_bottom_bar(self):
+        widget = QWidget()
+        widget.setStyleSheet(f"background-color: {BG_CARD}; border-top: 1px solid {BORDER_COLOR};")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(16, 10, 16, 12)
+
+        self.snapshot_cb = QCheckBox("Guncelleme oncesi snapshot al")
+        self.snapshot_cb.setChecked(True)
+        self.snapshot_cb.setToolTip(
+            "Guncelleme baslamadan once Timeshift ile snapshot olusturur.\n"
+            "Sorun yasanirsa bu snapshot'a geri donulebilir."
+        )
+        layout.addWidget(self.snapshot_cb)
+
+        layout.addStretch()
+
+        self.update_btn = QPushButton("Guncelle")
+        self.update_btn.setObjectName("accentButton")
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.setEnabled(False)
+        self.update_btn.clicked.connect(self.on_update)
+        layout.addWidget(self.update_btn)
+
+        return widget
+
+    def on_check(self):
+        if self.check_worker and self.check_worker.isRunning():
+            return
+        self.check_btn.setEnabled(False)
+        self.check_btn.setText("Kontrol ediliyor...")
+        self.status_label.setText("Pacman veritabani guncelleniyor...")
+        self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 4px 0;")
+        self.terminal.clear()
+        self.terminal.append("[Hiroki] Pacman veritabani guncelleniyor...")
+
+        self.check_worker = CheckWorker()
+        self.check_worker.check_done.connect(self._on_check_done)
+        self.check_worker.check_error.connect(self._on_check_error)
+        self.check_worker.start()
+
+    def _on_check_done(self, packages, now):
+        self.packages = packages
+        self.last_label.setText(f"Son kontrol: {now}")
+        self.check_btn.setEnabled(True)
+        self.check_btn.setText("Kontrol Et")
+
+        if packages:
+            self.terminal.clear()
+            self.terminal.append(f"[Hiroki] {len(packages)} guncelleme bulundu:\n")
+            for name, new_ver in packages:
+                self.terminal.append(f"  -> {name}  ({new_ver})")
+            self.terminal.append(f"\n[Hiroki] Guncellemek icin 'Guncelle' butonuna basin.")
+            self.status_label.setText(f"{len(packages)} guncelleme mevcut.")
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 4px 0;")
+            self.update_btn.setEnabled(True)
+        else:
+            self.terminal.clear()
+            self.terminal.append("[Hiroki] Sisteminiz guncel. Guncelleme bulunamadi.")
+            self.status_label.setText("Sisteminiz guncel.")
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 4px 0;")
+            self.update_btn.setEnabled(False)
+
+    def _on_check_error(self, msg):
+        self.terminal.clear()
+        self.terminal.append(f"[Hiroki] HATA: {msg}")
+        self.status_label.setText(f"Hata: {msg}")
+        self.status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 12px; padding: 4px 0;")
+        self.check_btn.setEnabled(True)
+        self.check_btn.setText("Kontrol Et")
+        self.update_btn.setEnabled(False)
+
+    def on_update(self):
+        if not self.packages:
+            return
+
+        count = len(self.packages)
+        reply = QMessageBox.question(
+            self,
+            "Guncelleme Onayi",
+            f"{count} paket guncellenecek.\n\n"
+            "Guncellemek istiyor musunuz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.update_btn.setEnabled(False)
+        self.check_btn.setEnabled(False)
+        self.terminal.clear()
+
+        if self.snapshot_cb.isChecked():
+            self.terminal.append("[Hiroki] Guncelleme oncesi snapshot aliniyor...")
+            self.status_label.setText("Snapshot aliniyor...")
+            self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 4px 0;")
+            self.snapshot_worker = SnapshotWorker()
+            self.snapshot_worker.done.connect(self._on_snapshot_done)
+            self.snapshot_worker.start()
+        else:
+            self._start_update()
+
+    def _on_snapshot_done(self, success, msg):
+        if success:
+            self.terminal.append(f"[Hiroki] {msg}")
+        else:
+            self.terminal.append(f"[Hiroki] Snapshot hatasi: {msg}")
+            self.terminal.append("[Hiroki] Guncelleme yine de devam ediyor...")
+        self._start_update()
+
+    def _start_update(self):
+        self.terminal.append("[Hiroki] Guncelleme baslatiliyor...\n")
+        self.status_label.setText("Guncelleme yapiliyor...")
+        self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 4px 0;")
+        self.update_worker = UpdateWorker()
+        self.update_worker.output_line.connect(self._on_output_line)
+        self.update_worker.update_done.connect(self._on_update_done)
+        self.update_worker.start()
+
+    def _on_output_line(self, line):
+        self.terminal.append(line)
+        cursor = self.terminal.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.terminal.setTextCursor(cursor)
+
+    def _on_update_done(self, success, msg):
+        if success:
+            self.terminal.append(f"\n[Hiroki] {msg}")
+            self.status_label.setText("Guncelleme tamamlandi!")
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 4px 0;")
+        else:
+            self.terminal.append(f"\n[Hiroki] {msg}")
+            self.status_label.setText("Guncelleme hatasi!")
+            self.status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 12px; padding: 4px 0;")
+
+        self.check_btn.setEnabled(True)
+        self.check_btn.setText("Kontrol Et")
+        self.update_btn.setEnabled(False)
+        self.packages = []
+
+    def closeEvent(self, event):
+        if (self.update_worker and self.update_worker.isRunning()) or \
+           (self.snapshot_worker and self.snapshot_worker.isRunning()):
+            reply = QMessageBox.question(
+                self,
+                "Islem Devam Ediyor",
+                "Guncelleme veya snapshot islemi devam ediyor. Kapatmak istediginize emin misiniz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Hiroki Guncelleme Merkezi")
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_MAIN))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#1e1e1e"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+
+    window = HirokiUpdateWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

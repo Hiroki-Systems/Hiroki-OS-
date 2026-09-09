@@ -1,0 +1,27 @@
+// Hiroki OS - Plymouth Script - Sakura
+// Koyu arkaplan (#0D0D1A) üzerine Hiroki logosu ve sakura animasyonu
+
+Window.SetBackgroundTopColor(0.05, 0.05, 0.10); // #0D0D1A
+Window.SetBackgroundBottomColor(0.17, 0.10, 0.41); // #2D1B69
+
+hiroki_image = Image("hiroki-logo.png");
+hiroki_sprite = Sprite(hiroki_image);
+hiroki_sprite.SetX(Window.GetWidth() / 2 - hiroki_image.GetWidth() / 2);
+hiroki_sprite.SetY(Window.GetHeight() / 2 - hiroki_image.GetHeight() / 2 - 50);
+
+for (i = 0; i < 5; i++) {
+    dot_image = Image("dot.png");
+    dot_sprite = Sprite(dot_image);
+    dot_sprite.SetX(Window.GetWidth() / 2 - 60 + i * 30);
+    dot_sprite.SetY(Window.GetHeight() / 2 + 80);
+}
+
+progress = 0;
+fun refresh_callback() {
+    progress++;
+    if (progress > 5) progress = 0;
+    // Pembe noktalar sırayla belirir (sakura yaprakları)
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+Plymouth.SetBootProgressFunction(refresh_callback);

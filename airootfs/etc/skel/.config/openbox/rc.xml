@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc"
+  xmlns:xi="http://www.w3.org/2001/XInclude">
+
+  <resistance><strength>10</strength><screen_edge_strength>20</screen_edge_strength></resistance>
+  <focus><focusNew>yes</focusNew><followMouse>no</followMouse><focusLast>yes</focusLast><underMouse>no</underMouse><raiseOnFocus>no</raiseOnFocus></focus>
+  <placement><policy>Smart</policy><center>yes</center><monitor>Primary</monitor><primaryMonitor>1</primaryMonitor></placement>
+  <desktops><number>4</number><firstdesk>1</firstdesk><names><name>1</name><name>2</name><name>3</name><name>4</name></names></desktops>
+  <theme>
+    <name>Clearlooks</name><titleLayout>NLIMC</titleLayout>
+    <keepBorder>yes</keepBorder><animateIconify>yes</animateIconify>
+    <font active="Sans Bold 10" inactive="Sans 10" menu="Sans 10" omenu="Sans 10" sys="Sans 10" />
+  </theme>
+
+  <keyboard>
+    <!-- Super key -->
+    <keybind key="Super_L">
+      <action name="ShowMenu"><menu>root-menu</menu></action>
+    </keybind>
+    <!-- Terminal -->
+    <keybind key="A-Return">
+      <action name="Execute"><command>alacritty</command></action>
+    </keybind>
+    <keybind key="C-A-t">
+      <action name="Execute"><command>alacritty</command></action>
+    </keybind>
+    <!-- Launcher -->
+    <keybind key="A-space">
+      <action name="Execute"><command>rofi -show drun -show-icons</command></action>
+    </keybind>
+    <keybind key="Super_L">
+      <action name="Execute"><command>rofi -show drun -show-icons</command></action>
+    </keybind>
+    <!-- Close -->
+    <keybind key="A-F4">
+      <action name="Close"/>
+    </keybind>
+    <keybind key="C-Q">
+      <action name="Close"/>
+    </keybind>
+    <!-- Window focus -->
+    <keybind key="A-Tab">
+      <action name="NextWindow"><finalactions><action name="Focus"/><action name="Raise"/></finalactions></action>
+    </keybind>
+    <!-- Fullscreen -->
+    <keybind key="A-F11">
+      <action name="ToggleFullscreen"/>
+    </keybind>
+    <!-- Maximize -->
+    <keybind key="A-F9">
+      <action name="ToggleMaximizeFull"/>
+    </keybind>
+    <!-- Minimize -->
+    <keybind key="A-F10">
+      <action name="Iconify"/>
+    </keybind>
+    <!-- Workspace switch -->
+    <keybind key="C-A-Left">
+      <action name="GoToDesktop"><to>left</to><wrap>yes</wrap></action>
+    </keybind>
+    <keybind key="C-A-Right">
+      <action name="GoToDesktop"><to>right</to><wrap>yes</wrap></action>
+    </keybind>
+    <keybind key="A-F1">
+      <action name="GoToDesktop"><to>1</to></action>
+    </keybind>
+    <keybind key="A-F2">
+      <action name="GoToDesktop"><to>2</to></action>
+    </keybind>
+    <keybind key="A-F3">
+      <action name="GoToDesktop"><to>3</to></action>
+    </keybind>
+    <keybind key="A-F4">
+      <action name="GoToDesktop"><to>4</to></action>
+    </keybind>
+    <!-- Move to workspace -->
+    <keybind key="S-A-1">
+      <action name="SendToDesktop"><to>1</to><follow>yes</follow></action>
+    </keybind>
+    <keybind key="S-A-2">
+      <action name="SendToDesktop"><to>2</to><follow>yes</follow></action>
+    </keybind>
+    <keybind key="S-A-3">
+      <action name="SendToDesktop"><to>3</to><follow>yes</follow></action>
+    </keybind>
+    <keybind key="S-A-4">
+      <action name="SendToDesktop"><to>4</to><follow>yes</follow></action>
+    </keybind>
+    <!-- Move window -->
+    <keybind key="A-Left">
+      <action name="UnmaximizeFull"/>
+      <action name="MoveResizeTo"><x>0</x><y>0</y><width>50%</width><height>100%</height></action>
+    </keybind>
+    <keybind key="A-Right">
+      <action name="UnmaximizeFull"/>
+      <action name="MoveResizeTo"><x>50%</x><y>0</y><width>50%</width><height>100%</height></action>
+    </keybind>
+    <keybind key="A-Up">
+      <action name="UnmaximizeFull"/>
+      <action name="MoveResizeTo"><x>0</x><y>0</y><width>100%</width><height>50%</height></action>
+    </keybind>
+    <keybind key="A-Down">
+      <action name="UnmaximizeFull"/>
+      <action name="MoveResizeTo"><x>0</x><y>50%</y><width>100%</width><height>50%</height></action>
+    </keybind>
+    <!-- Screenshot -->
+    <keybind key="Print">
+      <action name="Execute"><command>flameshot gui</command></action>
+    </keybind>
+  </keyboard>
+
+  <mouse>
+    <context name="Frame">
+      <mousebind button="A-Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="A-Left" action="Drag"><action name="Move"/></mousebind>
+      <mousebind button="A-Right" action="Drag"><action name="Resize"/></mousebind>
+    </context>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Left" action="Drag"><action name="Move"/></mousebind>
+      <mousebind button="Left" action="DoubleClick"><action name="ToggleMaximizeFull"/></mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Click"><action name="Close"/></mousebind>
+    </context>
+    <context name="Maximize">
+      <mousebind button="Left" action="Click"><action name="ToggleMaximizeFull"/></mousebind>
+    </context>
+    <context name="Iconify">
+      <mousebind button="Left" action="Click"><action name="Iconify"/></mousebind>
+    </context>
+  </mouse>
+
+  <applications>
+    <application type="normal" class="*"><decor>yes</decor><shade>no</shade><position force="no" /><desktop>0</desktop><layer>normal</layer></application>
+  </applications>
+
+  <menu id="root-menu" label="Hiroki OS">
+    <item label="Terminal"><action name="Execute"><command>alacritty</command></action></item>
+    <item label="File Manager"><action name="Execute"><command>pcmanfm</command></action></item>
+    <item label="Browser"><action name="Execute"><command>firefox</command></action></item>
+    <item label="Applications" submenu="yes">
+      <item label="Settings"><action name="Execute"><command>lxappearance</command></action></item>
+      <item label="Screenshot"><action name="Execute"><command>flameshot gui</command></action></item>
+    </item>
+    <separator/>
+    <item label="Reconfigure" execute="openbox --reconfigure"/>
+    <item label="Lock" submenu="yes">
+      <item label="Hibernate"><action name="Execute"><command>systemctl hibernate</command></action></item>
+      <item label="Reboot"><action name="Execute"><command>systemctl reboot</command></action></item>
+      <item label="Shutdown"><action name="Execute"><command>systemctl poweroff</command></action></item>
+    </item>
+  </menu>
+</openbox_config>

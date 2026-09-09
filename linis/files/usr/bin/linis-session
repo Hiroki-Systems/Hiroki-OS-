@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Linis oturum açılış betiği.
+# Duvar kağıdını ÖNCE kurar — built-in compositor ilk karede root'u
+# wallpaper katmanı olarak yakalar.
+
+set -e
+
+export XDG_CURRENT_DESKTOP=Linis
+export XDG_SESSION_TYPE=x11
+export GDK_DISABLE_SANDBOXED_LOADER=1
+
+# --- Cursor theme ---
+export XCURSOR_THEME=Adwaita
+export XCURSOR_SIZE=24
+if command -v xrdb >/dev/null 2>&1; then
+  printf "Xcursor.theme: Adwaita\nXcursor.size: 24\n" | xrdb -merge 2>/dev/null || true
+fi
+
+# --- duvar kağıdı ---
+wall=""
+# Config'den oku
+CONFIG="$HOME/.config/linis/config.toml"
+[ -f "$CONFIG" ] || CONFIG="/etc/xdg/linis/config.toml"
+if [ -f "$CONFIG" ]; then
+  cfg_wall=$(grep -E '^wallpaper\s*=' "$CONFIG" 2>/dev/null | head -1 | sed 's/^wallpaper *= *"\([^"]*\)".*/\1/')
+  [ -n "$cfg_wall" ] && [ -f "$cfg_wall" ] && wall="$cfg_wall"
+fi
+# Fallback
+if [ -z "$wall" ]; then
+  for cand in \
+    "$HOME/.config/linis/wallpaper" \
+    /usr/share/linis/wallpapers/sakura-gradient.jpg \
+    /usr/share/linis/wallpapers/*.jpg \
+    /usr/share/linis/wallpapers/*.png ; do
+    [ -f "$cand" ] && wall="$cand" && break
+  done
+fi
+if [ -n "$wall" ]; then
+  if command -v feh >/dev/null 2>&1; then
+    feh --no-fehbg --bg-fill "$wall" || true
+  elif command -v xsetroot >/dev/null 2>&1; then
+    xsetroot -solid "#1a1b26" || true
+  fi
+fi
+
+# --- WM ---
+linis &
+LINIS_PID=$!
+
+# --- autostart ---
+AUTOSTART="$HOME/.config/linis/autostart"
+[ -f "$AUTOSTART" ] || AUTOSTART=/etc/xdg/linis/autostart
+[ -f "$AUTOSTART" ] || AUTOSTART=/usr/share/linis/autostart
+if [ -f "$AUTOSTART" ]; then
+  bash "$AUTOSTART" || true
+fi
+
+# WM çıkana kadar bekle
+wait "$LINIS_PID" 2>/dev/null || true
+exit 0

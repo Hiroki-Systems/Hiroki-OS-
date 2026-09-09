@@ -1,0 +1,4 @@
+#!/bin/bash
+# Hiroki Installer launcher (PyQt6)
+# live kullanici sudo NOPASSWD ile calisir
+exec sudo -E python3 /usr/bin/hiroki-installer "$@"

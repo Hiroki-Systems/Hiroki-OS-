@@ -1,0 +1,9 @@
+[Unit]
+Description=Hiroki OS - Boot snapshot timer (90 saniye)
+
+[Timer]
+OnBootSec=90
+Unit=hiroki-boot-snapshot.service
+
+[Install]
+WantedBy=timers.target

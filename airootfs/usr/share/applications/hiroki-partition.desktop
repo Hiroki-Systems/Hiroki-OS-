@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Disk Yoneticisi
+Name[tr]=Hiroki Disk Yoneticisi
+Comment=Bolumleme ve disk yonetimi
+Comment[tr]=Bolumleme ve disk yonetimi
+Exec=hiroki-partition
+Icon=drive-harddisk-system
+Terminal=false
+Categories=System;
+StartupNotify=true

@@ -1,0 +1,25 @@
+# Linis genel yapılandırması
+# Kullanıcı kopyası: ~/.config/linis/config.toml
+# Bu dosya /etc/xdg/linis/ yahut ~/.config/linis/ içinde aranır.
+
+[wm]
+workspaces = 4
+master_ratio = 45
+terminal = "alacritty"
+file_manager = "pcmanfm"
+launcher = "rofi -show drun -show-icons"
+wallpaper = "/usr/share/linis/wallpapers/sakura-gradient.jpg"
+
+[gaps]
+outer = 6
+inner = 6
+
+[panel_left]
+width = 48
+
+[panel_bottom]
+height = 32
+
+[video]
+dir          = "/usr/share/linis/videos"
+duration_sec = 12

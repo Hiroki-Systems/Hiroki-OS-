@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Openbox session starter (hiroki-dm-session tarafından çağrılır)
+set -e
+
+export XDG_CURRENT_DESKTOP=Openbox
+export XDG_SESSION_TYPE=x11
+export GDK_DISABLE_SANDBOXED_LOADER=1
+
+# Cursor
+export XCURSOR_THEME=Adwaita
+export XCURSOR_SIZE=24
+printf "Xcursor.theme: Adwaita\nXcursor.size: 24\n" | xrdb -merge 2>/dev/null || true
+
+exec openbox-session

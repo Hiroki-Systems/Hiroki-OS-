@@ -1,0 +1,235 @@
+# Hiroki OS 1.0 Sakura - packages.x86_64
+# Archiso paket listesi - Kategorilere göre organize edilmiştir
+# Live ISO: Linis WM varsayılan olarak çalışır
+# Diğer DE paketleri installer ile hedef sisteme kurulur
+
+### TEMEL SİSTEM PAKETLERİ ###
+base
+base-devel
+linux
+linux-headers
+linux-firmware
+linux-firmware-whence
+mkinitcpio
+mkinitcpio-archiso
+arch-install-scripts
+syslinux
+grub
+efibootmgr
+os-prober
+dosfstools
+mtools
+memtest86+
+networkmanager
+network-manager-applet
+wireless_tools
+wpa_supplicant
+dialog
+iwd
+bluez
+bluez-utils
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+pipewire-audio
+pavucontrol
+sudo
+nano
+vim
+git
+wget
+curl
+htop
+fastfetch
+man-db
+man-pages
+texinfo
+reflector
+pacman-contrib
+bash-completion
+usbutils
+pciutils
+dmidecode
+lshw
+hwinfo
+haveged
+openssh
+rsync
+unzip
+zip
+7zip
+less
+which
+inetutils
+netctl
+nss-mdns
+
+### DOSYA SİSTEMİ DESTEĞİ ###
+ntfs-3g
+# exfat-utils kaldırıldı: exfatprogs ile çakışır (Conflicts), FUSE tabanlı eski sürüm
+exfatprogs
+btrfs-progs
+xfsprogs
+f2fs-tools
+gvfs
+gvfs-mtp
+gvfs-smb
+gvfs-gphoto2
+gvfs-afc
+gvfs-nfs
+udisks2
+udiskie
+
+### XORG VE WAYLAND ###
+xorg-server
+xorg-xinit
+xorg-xrandr
+xorg-xset
+xorg-xprop
+xorg-xkill
+xorg-xauth
+xorg-xinput
+xorg-xhost
+xorg-xdpyinfo
+xdg-utils
+xdg-user-dirs
+wayland
+xorg-xwayland
+wayland-protocols
+
+### GPU SÜRÜCÜLERİ ###
+mesa
+vulkan-icd-loader
+vulkan-radeon
+vulkan-intel
+xf86-video-amdgpu
+xf86-video-ati
+xf86-video-intel
+xf86-video-nouveau
+xf86-video-vesa
+xf86-video-fbdev
+libva-intel-driver
+virtualbox-guest-utils
+xf86-input-libinput
+xf86-input-elographics
+xf86-input-evdev
+
+### YAZI TİPLERİ ###
+ttf-liberation
+ttf-dejavu
+ttf-hack
+ttf-fira-code
+ttf-roboto
+adobe-source-code-pro-fonts
+
+### HİROKİ INSTALLER ###
+python
+python-gobject
+python-pyqt6
+polkit
+polkit-gnome
+shared-mime-info
+tumbler
+
+### LIVE OTURUM - KDE PLASMA ###
+plasma-meta
+kwin
+breeze
+breeze-gtk
+breeze-icons
+oxygen
+konsole
+dolphin
+kate
+ark
+sddm
+xorg-server
+qt5-base
+qt5-svg
+qt5-wayland
+qt6-base
+qt6-svg
+adwaita-cursors
+network-manager-applet
+pavucontrol
+arandr
+galculator
+
+
+### ORTAK MASAÜSTÜ UYGULAMALARI ###
+vlc
+file-roller
+engrampa
+evince
+okular
+eog
+gwenview
+gnome-calculator
+kcalc
+baobab
+gnome-system-monitor
+timeshift
+gparted
+# pamac-aur & octopi resmi depolarda yok (yalnız AUR). Kurulum sonrası: yay -S pamac-aur
+conky
+redshift
+gnome-disk-utility
+xarchiver
+lxterminal
+gnome-terminal
+ark
+flameshot
+bleachbit
+plank
+
+### SES VE MULTİMEDYA ###
+alsa-utils
+alsa-plugins
+# pulseaudio-alsa kaldırıldı: sistem PipeWire tabanlı (pipewire-alsa + pipewire-pulse),
+# PulseAudio ALSA katmanı gereksiz ve çakışabilir
+gst-plugins-base
+gst-plugins-good
+gst-plugins-bad
+gst-plugins-ugly
+gst-libav
+
+### BASKI VE TARAYICI ###
+cups
+cups-pdf
+cups-filters
+system-config-printer
+ghostscript
+gsfonts
+
+### GÜVENLİK ###
+ufw
+gufw
+firewalld
+gnupg
+
+### GELİŞTİRİCİ ARAÇLARI ###
+python
+python-pip
+python-gobject
+python-pyqt6
+gtk3
+gtk4
+vte3
+glib2
+
+### HİROKİ ÖZEL ###
+plymouth
+# grub-customizer resmi depolarda yok (yalnız AUR)
+chafa
+lsb-release
+figlet
+lolcat
+python-pyqt6
+
+### EK ARAÇLAR ###
+reflector
+rate-mirrors
+archlinux-keyring
+pacman-mirrorlist

@@ -1,0 +1,16 @@
+NAME="Hiroki OS"
+PRETTY_NAME="Hiroki OS 1.0 (Sakura)"
+ID=hiroki
+ID_LIKE=arch
+BUILD_ID=rolling
+VERSION="1.0 Sakura"
+VERSION_ID="1.0"
+VERSION_CODENAME=sakura
+HOME_URL="https://hiroki-os.org"
+DOCUMENTATION_URL="https://wiki.hiroki-os.org"
+SUPPORT_URL="https://hiroki-os.org/support"
+BUG_REPORT_URL="https://github.com/hiroki-os/hiroki-os/issues"
+PRIVACY_POLICY_URL="https://hiroki-os.org/privacy"
+LOGO=hiroki-logo
+ANSI_COLOR="0;35"
+CPE_NAME="cpe:/o:hiroki-os:hiroki_os:1.0"

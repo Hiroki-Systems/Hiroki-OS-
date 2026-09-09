@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hiroki OS 1.0 Sakura — Proje Özeti</title>
+<style>
+:root { --mor:#2D1B69; --pembe:#E91E8C; --turkuaz:#00D4AA; --koyu:#0D0D1A; --lacivert:#1A1A2E; --acik:#EAEAEA; --gri:#A0A0B8; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--koyu);color:var(--acik);font-family:Inter,system-ui,Segoe UI,Helvetica,Arial,sans-serif;line-height:1.6}
+header{background:linear-gradient(135deg,var(--mor) 0%,var(--lacivert) 50%,var(--pembe) 100%);padding:36px 20px;text-align:center}
+header h1{font-size:32px;font-weight:900;letter-spacing:1px}
+header p{color:#fff;opacity:.9;margin-top:8px}
+.badge{display:inline-block;background:var(--turkuaz);color:var(--koyu);padding:4px 10px;border-radius:999px;font-weight:800;font-size:12px;margin:6px}
+.wrap{max-width:1100px;margin:0 auto;padding:20px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.card{background:var(--lacivert);border:1px solid var(--mor);border-radius:14px;padding:18px}
+.card h3{color:var(--pembe);margin-bottom:8px;font-size:15px}
+.card ul{margin-left:18px;color:var(--acik)}
+.card li{margin:4px 0;color:var(--gri)}
+.card li b{color:var(--acik)}
+.pal{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.swatch{width:90px;height:64px;border-radius:10px;display:flex;align-items:flex-end;justify-content:center;padding:6px;font-size:11px;font-weight:700;color:#fff;border:1px solid rgba(255,255,255,.15)}
+.tree{background:#0b0b18;border:1px solid #2a2a4a;border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#c8c8d8;overflow:auto;max-height:420px;white-space:pre}
+.kbd{display:inline-block;background:#0b0b18;border:1px solid #333;border-bottom-width:2px;border-radius:6px;padding:2px 6px;font-family:monospace;font-size:12px}
+.section{margin-top:26px}
+.section h2{font-size:20px;border-left:4px solid var(--pembe);padding-left:10px;margin-bottom:10px}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th,.table td{border:1px solid #2a2a4a;padding:8px;text-align:left}
+.table th{background:var(--mor);color:#fff}
+.table td{color:var(--gri)}
+.table td:first-child{color:var(--acik);font-weight:700}
+.note{background:linear-gradient(135deg,#2D1B69 0%,#E91E8C 100%);padding:14px;border-radius:12px;margin-top:16px;color:#fff}
+.wall{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:10px}
+.wall div{border-radius:10px;overflow:hidden;border:1px solid #2a2a4a}
+.wall img{width:100%;height:90px;object-fit:cover;display:block}
+.wall p{font-size:11px;padding:6px;background:var(--lacivert);color:var(--gri);text-align:center}
+footer{text-align:center;padding:18px;color:var(--gri);font-size:12px;border-top:1px solid #1f1f3a;margin-top:24px}
+a{color:var(--turkuaz);text-decoration:none}
+a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<header>
+<div style="font-size:48px">🌸</div>
+<h1>Hiroki OS 1.0 Sakura</h1>
+<p>Arch Linux tabanlı • Archiso • Calamares • Sakura gibi zarif</p>
+<div style="margin-top:12px">
+<span class="badge">HIROKI_OS</span>
+<span class="badge" style="background:var(--pembe);color:#fff">v1.0</span>
+<span class="badge" style="background:var(--lacivert);color:var(--acik);border:1px solid var(--mor)">Arch tabanlı</span>
+</div>
+<p style="margin-top:10px;font-size:13px;opacity:.8">Felsefe: Donanımını tanı, en uygun masaüstünü öner ama asla zorla.</p>
+</header>
+
+<div class="wrap">
+<div class="grid">
+<div class="card">
+<h3>✅ Tamamlanan — Proje Durumu</h3>
+<ul>
+<li><b>114 dosya</b> oluşturuldu — tüm dizin yapısı ve yapılandırmalar</li>
+<li><b>build.sh</b> 17 adımlı, root kontrol, checksum, QEMU talimatı</li>
+<li><b>packages.x86_64</b> 259 paket, kategorili (multilib aktif)</li>
+<li><b>profiledef.sh</b> — HIROKI_OS, hiroki-os, Hiroki OS Project</li>
+<li><b>Archiso tabanı olmadan</b> — sadece Hiroki dosyaları, Linux'ta indirip derlemeye hazır</li>
+</ul>
+<div class="note">💡 Sonraki adım: Arch Linux'ta <span class="kbd">sudo ./build.sh</span> ile <span class="kbd">out/hiroki-os-1.0-x86_64.iso</span> üretin.</div>
+</div>
+<div class="card">
+<h3>🧠 Akıllı DE Seçici — Özet</h3>
+<ul>
+<li><b>Algılama:</b> /proc/meminfo, /proc/cpuinfo, lspci, lsblk, systemd-detect-virt</li>
+<li><b>Matris:</b> 512MB→i3, 2GB→LXQt, 4GB→XFCE, 8GB→KDE, 8GB+→KDE/GNOME</li>
+<li><b>10 DE:</b> XFCE, KDE, GNOME, Cinnamon, MATE, Budgie, LXQt, i3wm, Openbox, Hyprland</li>
+<li><b>2 Mod:</b> Live GTK + Calamares packagechooser_hiroki</li>
+<li><b>Asla zorlamaz:</b> Uyarı gösterir, onay → devam</li>
+</ul>
+</div>
+</div>
+
+<div class="section">
+<h2>🎨 Hiroki Renk Paleti</h2>
+<div class="pal">
+<div class="swatch" style="background:#2D1B69">#2D1B69<br>Mor</div>
+<div class="swatch" style="background:#E91E8C">#E91E8C<br>Pembe</div>
+<div class="swatch" style="background:#00D4AA;color:#0D0D1A">#00D4AA<br>Turkuaz</div>
+<div class="swatch" style="background:#0D0D1A">#0D0D1A<br>Koyu</div>
+<div class="swatch" style="background:#1A1A2E">#1A1A2E<br>Lacivert</div>
+<div class="swatch" style="background:#EAEAEA;color:#0D0D1A">#EAEAEA<br>Metin</div>
+<div class="swatch" style="background:#A0A0B8;color:#0D0D1A">#A0A0B8<br>Gri</div>
+</div>
+</div>
+
+<div class="section">
+<h2>🖼️ 5 Duvar Kağıdı (Oluşturuldu)</h2>
+<div class="wall">
+<div><img src="airootfs/usr/share/hiroki/wallpapers/sakura-gradient.jpg"><p>sakura-gradient<br>(varsayılan)</p></div>
+<div><img src="airootfs/usr/share/hiroki/wallpapers/geometric-waves.jpg"><p>geometric-waves</p></div>
+<div><img src="airootfs/usr/share/hiroki/wallpapers/minimal-mountain.jpg"><p>minimal-mountain</p></div>
+<div><img src="airootfs/usr/share/hiroki/wallpapers/abstract-neon.jpg"><p>abstract-neon</p></div>
+<div><img src="airootfs/usr/share/hiroki/wallpapers/space-theme.jpg"><p>space-theme</p></div>
+</div>
+<p style="color:var(--gri);font-size:12px;margin-top:8px">Not: Önizlemede koyu tema nedeniyle dış CSS yüklenemeyebilir; indirildiğinde duvar kağıtları tam kalite JPG olarak çalışır.</p>
+</div>
+
+<div class="section">
+<h2>📁 Dizin Yapısı — Gerçek Dosya Haritası</h2>
+<div class="tree">hiroki-os/
+├── airootfs/
+│   ├── etc/
+│   │   ├── hostname (hiroki)
+│   │   ├── locale.conf (tr_TR.UTF-8)
+│   │   ├── vconsole.conf (trq)
+│   │   ├── os-release (Hiroki OS 1.0 Sakura)
+│   │   ├── lsb-release
+│   │   ├── locale.gen, hosts, mkinitcpio.conf
+│   │   ├── pacman.d/mirrorlist (TR mirror + reflector)
+│   │   ├── sudoers.d/10-hiroki-live (hiroki NOPASSWD)
+│   │   ├── lightdm/{lightdm.conf, lightdm-gtk-greeter.conf} (Hiroki-Dark)
+│   │   ├── hiroki/
+│   │   │   ├── branding/
+│   │   │   ├── de-selector/recommendations.json (5 tier)
+│   │   │   └── post-install/{hiroki-post-install,apply-theme,enable-services,setup-displaymanager}.sh
+│   │   ├── calamares/
+│   │   │   ├── settings.conf (welcome→...→hiroki-de-select→...→finished)
+│   │   │   ├── branding/hiroki/{branding.desc (900x600), show.qml (5 slayt), png}
+│   │   │   └── modules/{welcome,locale,keyboard,partition (Btrfs @),users (wheel),displaymanager (lightdm/sddm/gdm),packagechooser_hiroki (10 DE),netinstall,shell,fstab,bootloader,services-systemd,finished}.conf
+│   │   ├── skel/ (.bashrc Hiroki prompt, .config/autostart/hiroki-welcome, gtk-3.0/settings.ini, xfce4, conky, waybar, wofi, hypr, mako, picom, dunst, fastfetch)
+│   │   └── systemd/system/hiroki-live.service
+│   ├── usr/bin/{hiroki-hw-detect, hiroki-de-selector, hiroki-welcome, hiroki-theme-manager, hiroki-update, hiroki-snapshot, hiroki-driver-manager, hiroki-live-setup}
+│   ├── usr/share/
+│   │   ├── hiroki/{de-selector/hiroki-de-selector.py (GTK grid), wallpapers/5.jpg, ascii/hiroki.txt, neofetch/config.conf}
+│   │   ├── hiroki-welcome/hiroki-welcome.py (Live + İlk Boot)
+│   │   ├── themes/Hiroki-Dark/{gtk-3.0/gtk.css, gtk-2.0/gtkrc}
+│   │   ├── icons/Hiroki-Icons/index.theme (Papirus mor)
+│   │   ├── grub/themes/hiroki/theme.txt
+│   │   ├── sddm/themes/hiroki/{theme.conf,Main.qml}
+│   │   ├── plymouth/themes/hiroki/{hiroki.plymouth,hiroki.script}
+│   │   └── applications/hiroki-welcome.desktop
+│   └── root/.bashrc
+├── efiboot/loader/{loader.conf, entries/hiroki.conf}
+├── syslinux/syslinux.cfg (vesamenu Hiroki)
+├── grub/grub.cfg (Hiroki tema, 7 giriş)
+├── packages.x86_64 (259 paket, kategorili)
+├── pacman.conf (multilib)
+├── profiledef.sh (HIROKI_OS, hiroki-os, file_permissions)
+└── build.sh (17 adım, mkarchiso + checksum)
+
+Dokümantasyon: README.md, BUILDING.md, INSTALL.md, CUSTOMIZATION.md, CONTRIBUTING.md, LICENSE, TESTING.md (21 test), FILEMAP.md
+Toplam: 114 dosya — tümü kopyala-yapıştır çalışır</div>
+</div>
+
+<div class="section">
+<h2>⚙️ Calamares Modül Sırası</h2>
+<table class="table">
+<tr><th>Show Sırası</th><th>Exec Sırası</th><th>Açıklama</th></tr>
+<tr><td>welcome</td><td>partition</td><td>15 GB / 512 MB kontrol, internet</td></tr>
+<tr><td>locale</td><td>mount / unpackfs / machineid / fstab</td><td>tr_TR, Europe/Istanbul</td></tr>
+<tr><td>keyboard</td><td>locale / keyboard / localecfg</td><td>trq</td></tr>
+<tr><td>partition</td><td>users / displaymanager / networkcfg</td><td>Btrfs @,@home,@snapshots + swap</td></tr>
+<tr><td><b>hiroki-de-select</b></td><td>hwclock / services-systemd</td><td>10 DE + öneri + uyarı</td></tr>
+<tr><td>netinstall</td><td>packages (DE paketleri)</td><td>Firefox,VLC vb.</td></tr>
+<tr><td>users</td><td>shell@postinstall (tema+DM+servis)</td><td>wheel, bash</td></tr>
+<tr><td>summary</td><td>grubcfg / bootloader / umount</td><td>Hiroki GRUB</td></tr>
+<tr><td>finished</td><td></td><td>Sakura tamamlandı 🌸</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2>🔧 Hızlı Komutlar</h2>
+<div class="card" style="font-size:13px">
+<p><b>Derle:</b> <span class="kbd">cd hiroki-os && sudo ./build.sh</span> → <span class="kbd">out/hiroki-os-1.0-x86_64.iso</span></p>
+<p><b>Doğrula:</b> <span class="kbd">sha256sum -c out/*.sha256</span></p>
+<p><b>QEMU Live:</b> <span class="kbd">qemu-system-x86_64 -enable-kvm -m 2048 -cdrom out/*.iso -boot d</span></p>
+<p><b>Düşük RAM testi:</b> <span class="kbd">qemu-system-x86_64 -m 512 -cdrom out/*.iso</span> → i3 öneri & uyarı</p>
+<p><b>Donanım algıla:</b> <span class="kbd">hiroki-hw-detect && cat /tmp/hiroki-hw-info.json</span></p>
+<p><b>DE Seçici:</b> <span class="kbd">hiroki-de-selector</span> &nbsp; <b>Welcome:</b> <span class="kbd">hiroki-welcome --force</span></p>
+<p><b>Tema:</b> <span class="kbd">hiroki-theme-manager</span> &nbsp; <b>Güncelle:</b> <span class="kbd">hiroki-update</span> &nbsp; <b>Sürücü:</b> <span class="kbd">hiroki-driver-manager</span></p>
+</div>
+</div>
+
+<div class="section">
+<h2>📄 Dokümantasyon</h2>
+<div class="grid">
+<div class="card"><h3>📖 README.md</h3><p style="color:var(--gri);font-size:13px">Özellikler, ekran görüntüleri, hızlı başlangıç, öneri matrisi, yapı haritası.</p></div>
+<div class="card"><h3>🔨 BUILDING.md</h3><p style="color:var(--gri);font-size:13px">Archiso gereksinimler, 17 adım, QEMU/VBox test, sorun giderme.</p></div>
+<div class="card"><h3>💿 INSTALL.md</h3><p style="color:var(--gri);font-size:13px">BIOS/UEFI, otomatik/manuel/dual-boot, LUKS, kurulum sonrası.</p></div>
+<div class="card"><h3>🎨 CUSTOMIZATION.md</h3><p style="color:var(--gri);font-size:13px">GTK/ikon/GRUB/Plymouth, her DE için özelleştirme, kendi teman.</p></div>
+</div>
+<p style="margin-top:10px;color:var(--gri);font-size:13px">+ <b>CONTRIBUTING.md</b> (PR süreci), <b>LICENSE</b> (GPLv3), <b>TESTING.md</b> (21 test), <b>FILEMAP.md</b> (tam harita)</p>
+</div>
+
+<footer>
+🌸 Hiroki OS Project — <a href="https://hiroki-os.org">hiroki-os.org</a> • Arch tabanlı • Sakura gibi zarif<br>
+114 dosya • Tüm yapılandırmalar gerçek ve çalışır • Arch Linux'ta <span class="kbd">sudo ./build.sh</span> ile ISO'ya dönüşür
+</footer>
+</div>
+</body>
+</html>

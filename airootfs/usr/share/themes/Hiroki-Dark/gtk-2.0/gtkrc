@@ -1,0 +1,25 @@
+# Hiroki OS - Hiroki-Dark GTK2
+# Arc Dark tabanlı
+
+gtk-color-scheme = "bg_color:#1A1A2E\nfg_color:#EAEAEA\nbase_color:#0D0D1A\ntext_color:#EAEAEA\nselected_bg_color:#E91E8C\nselected_fg_color:#FFFFFF\ntooltip_bg_color:#1A1A2E\ntooltip_fg_color:#EAEAEA"
+
+style "hiroki-default" {
+  bg[NORMAL] = "#1A1A2E"
+  bg[PRELIGHT] = "#2D1B69"
+  bg[ACTIVE] = "#2D1B69"
+  bg[SELECTED] = "#E91E8C"
+  fg[NORMAL] = "#EAEAEA"
+  fg[PRELIGHT] = "#FFFFFF"
+  fg[ACTIVE] = "#FFFFFF"
+  fg[SELECTED] = "#FFFFFF"
+  text[NORMAL] = "#EAEAEA"
+  text[SELECTED] = "#FFFFFF"
+  base[NORMAL] = "#0D0D1A"
+  base[SELECTED] = "#E91E8C"
+  GtkButton::inner-border = {2,2,2,2}
+  GtkButton::default-border = {0,0,0,0}
+  xthickness = 1
+  ythickness = 1
+}
+
+class "GtkWidget" style "hiroki-default"

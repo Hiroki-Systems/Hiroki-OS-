@@ -1,0 +1,1067 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Hiroki OS - Sistem Ayarlari (Tweaks Panel)
+# PyQt6 based system configuration tool
+
+import subprocess
+import os
+import sys
+import shutil
+import re
+
+try:
+    from PyQt6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QLabel, QPushButton, QFrame, QStackedWidget, QLineEdit,
+        QComboBox, QCheckBox, QSlider, QGroupBox, QScrollArea,
+        QSpinBox, QMessageBox, QTabWidget, QFormLayout, QSizePolicy,
+        QSpacerItem, QFileDialog
+    )
+    from PyQt6.QtCore import Qt, QSize
+    from PyQt6.QtGui import QFont, QIcon, QColor, QPalette
+except ImportError:
+    print("Hata: PyQt6 bulunamadi. 'pacman -S python-pyqt6' ile kurun.")
+    sys.exit(1)
+
+ACCENT = "#d34188"
+BG_DARK = "#111111"
+BG_CARD = "#1a1a1a"
+BG_INPUT = "#222222"
+TEXT_COLOR = "#e0e0e0"
+TEXT_DIM = "#888888"
+BORDER_COLOR = "#333333"
+
+
+def run_cmd(cmd, capture=True):
+    try:
+        r = subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=capture, text=True, timeout=10)
+        return r.stdout.strip() if capture else ""
+    except Exception:
+        return ""
+
+
+def run_sudo(cmd):
+    try:
+        subprocess.run(["pkexec", "bash", "-c", cmd], timeout=30)
+    except Exception:
+        try:
+            subprocess.run(["sudo", "bash", "-c", cmd], timeout=30)
+        except Exception:
+            pass
+
+
+def read_file(path):
+    try:
+        with open(path, "r") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def write_file(path, content):
+    run_sudo(f"tee '{path}' > /dev/null <<'HTWEAKS_EOF'\n{content}\nHTWEAKS_EOF")
+
+
+def read_sysctl(key):
+    return run_cmd(f"sysctl -n {key} 2>/dev/null")
+
+
+def write_sysctl(key, val):
+    run_sudo(f"sysctl -w {key}={val}")
+    run_sudo(f"grep -q '^{key}' /etc/sysctl.d/99-hiroki.conf 2>/dev/null && sed -i 's|^{key}.*|{key} = {val}|' /etc/sysctl.d/99-hiroki.conf || echo '{key} = {val}' | sudo tee -a /etc/sysctl.d/99-hiroki.conf > /dev/null")
+
+
+def kde_write(group, key, value, kde5=True, kde6=True):
+    if kde5 and shutil.which("kwriteconfig5"):
+        run_cmd(f"kwriteconfig5 --file plasmarc --group Theme --key name '{value}'")
+        run_cmd(f"kwriteconfig5 --group '{group}' --key '{key}' '{value}'")
+    if kde6 and shutil.which("kwriteconfig6"):
+        run_cmd(f"kwriteconfig6 --group '{group}' --key '{key}' '{value}'")
+
+
+def systemctl_is_active(service):
+    return run_cmd(f"systemctl is-active {service}") == "active"
+
+
+def systemctl_enable(service, enable):
+    on = "enable" if enable else "disable"
+    run_sudo(f"systemctl {on} {service}")
+
+
+def systemctl_start_stop(service, start):
+    action = "start" if start else "stop"
+    run_sudo(f"systemctl {action} {service}")
+
+
+class StyledWidget(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+
+
+class SideButton(QPushButton):
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(42)
+        self._update_style(False)
+        self.toggled.connect(self._update_style)
+
+    def _update_style(self, checked):
+        if checked:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ACCENT};
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: bold;
+                    text-align: left;
+                    padding-left: 14px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {TEXT_COLOR};
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    text-align: left;
+                    padding-left: 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: #2a2a2a;
+                }}
+            """)
+
+
+class SettingsGroup(QGroupBox):
+    def __init__(self, title, parent=None):
+        super().__init__(title, parent)
+        self.setStyleSheet(f"""
+            QGroupBox {{
+                color: {ACCENT};
+                font-size: 13px;
+                font-weight: bold;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 16px 12px 12px 12px;
+                background-color: {BG_CARD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 14px;
+                top: 2px;
+                padding: 0 6px;
+                background-color: {BG_CARD};
+            }}
+        """)
+
+
+def make_combo(items, current=None):
+    combo = QComboBox()
+    combo.addItems(items)
+    combo.setStyleSheet(f"""
+        QComboBox {{
+            background-color: {BG_INPUT};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDER_COLOR};
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 12px;
+            min-width: 180px;
+        }}
+        QComboBox:hover {{ border-color: {ACCENT}; }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 24px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {BG_INPUT};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDER_COLOR};
+            selection-background-color: {ACCENT};
+        }}
+    """)
+    if current and current in items:
+        combo.setCurrentText(current)
+    return combo
+
+
+def make_line_edit(placeholder=""):
+    le = QLineEdit()
+    le.setPlaceholderText(placeholder)
+    le.setStyleSheet(f"""
+        QLineEdit {{
+            background-color: {BG_INPUT};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDER_COLOR};
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 12px;
+            min-width: 220px;
+        }}
+        QLineEdit:focus {{ border-color: {ACCENT}; }}
+    """)
+    return le
+
+
+def make_checkbox(text, checked=False):
+    cb = QCheckBox(text)
+    cb.setChecked(checked)
+    cb.setStyleSheet(f"""
+        QCheckBox {{
+            color: {TEXT_COLOR};
+            font-size: 12px;
+            spacing: 8px;
+        }}
+        QCheckBox::indicator {{
+            width: 16px;
+            height: 16px;
+            border: 2px solid {BORDER_COLOR};
+            border-radius: 3px;
+            background-color: {BG_INPUT};
+        }}
+        QCheckBox::indicator:checked {{
+            background-color: {ACCENT};
+            border-color: {ACCENT};
+        }}
+    """)
+    return cb
+
+
+def make_spinbox(min_val=0, max_val=10000, val=0):
+    sb = QSpinBox()
+    sb.setRange(min_val, max_val)
+    sb.setValue(val)
+    sb.setStyleSheet(f"""
+        QSpinBox {{
+            background-color: {BG_INPUT};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDER_COLOR};
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 12px;
+            min-width: 100px;
+        }}
+        QSpinBox:focus {{ border-color: {ACCENT}; }}
+    """)
+    return sb
+
+
+def make_button(text, primary=True):
+    btn = QPushButton(text)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setFixedHeight(34)
+    if primary:
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: 5px;
+                padding: 6px 20px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #e0509a; }}
+            QPushButton:pressed {{ background-color: #c03078; }}
+        """)
+    else:
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #2a2a2a;
+                color: {TEXT_COLOR};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 5px;
+                padding: 6px 20px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{ background-color: #333333; border-color: {ACCENT}; }}
+        """)
+    return btn
+
+
+def make_info_label(text):
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; padding: 2px;")
+    return lbl
+
+
+def make_label(text, bold=False):
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px; {'font-weight: bold;' if bold else ''} padding: 2px;")
+    return lbl
+
+
+def make_slider(min_val=0, max_val=100, val=50):
+    sl = QSlider(Qt.Orientation.Horizontal)
+    sl.setRange(min_val, max_val)
+    sl.setValue(val)
+    sl.setStyleSheet(f"""
+        QSlider::groove:horizontal {{
+            height: 6px;
+            background: {BG_INPUT};
+            border-radius: 3px;
+        }}
+        QSlider::handle:horizontal {{
+            background: {ACCENT};
+            width: 16px;
+            height: 16px;
+            margin: -5px 0;
+            border-radius: 8px;
+        }}
+        QSlider::handle:horizontal:hover {{ background: #e0509a; }}
+    """)
+    return sl
+
+
+def sep():
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet(f"background-color: {BORDER_COLOR}; max-height: 1px;")
+    return line
+
+
+class PageGenel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Genel Ayarlar")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("Sistem Adi (Hostname)")
+        f1 = QHBoxLayout()
+        self.hostname_input = make_line_edit()
+        current_host = run_cmd("hostname")
+        self.hostname_input.setText(current_host)
+        f1.addWidget(make_label("Hostname:"))
+        f1.addWidget(self.hostname_input)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Varsayilan Uygulama")
+        f2 = QVBoxLayout()
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("Tarayici:"))
+        self.browser_combo = make_combo(["firefox", "chromium", "qutebrowser", "lynx", "surf"])
+        r1.addWidget(self.browser_combo)
+        f2.addLayout(r1)
+        r2 = QHBoxLayout()
+        r2.addWidget(make_label("Dosya Yoneticisi:"))
+        self.filemgr_combo = make_combo(["dolphin", "thunar", "pcmanfm", "nautilus", "nemo"])
+        r2.addWidget(self.filemgr_combo)
+        f2.addLayout(r2)
+        r3 = QHBoxLayout()
+        r3.addWidget(make_label("Metin Duzenleyici:"))
+        self.editor_combo = make_combo(["kate", "kwrite", "mousepad", "leafpad", "nano", "vim"])
+        r3.addWidget(self.editor_combo)
+        f2.addLayout(r3)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("Oturum Ayarlari")
+        f3 = QVBoxLayout()
+        self.autostart_check = make_checkbox("Ototum baslangic uygulamalarini etkinlestir", True)
+        f3.addWidget(self.autostart_check)
+        self.screensaver_check = make_checkbox("Ekran koruyucuyu etkinlestir", False)
+        f3.addWidget(self.screensaver_check)
+        self.notifications_check = make_checkbox("Sistem bildirimlerini goster", True)
+        f3.addWidget(self.notifications_check)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Varlari Sifirla", False))
+        btn_row.addWidget(make_button("Kaydet", True))
+        layout.addLayout(btn_row)
+
+
+class PageMasaustu(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Masaustu Ayarlari")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("Dock / Panel Ayarlari")
+        f1 = QVBoxLayout()
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("Panel konumu:"))
+        self.panel_pos = make_combo(["Alt", "Ust", "Sol", "Sag"])
+        r1.addWidget(self.panel_pos)
+        f1.addLayout(r1)
+        r2 = QHBoxLayout()
+        r2.addWidget(make_label("Panel yuksekligi (px):"))
+        self.panel_height = make_spinbox(20, 80, 40)
+        r2.addWidget(self.panel_height)
+        f1.addLayout(r2)
+        self.autohide_panel = make_checkbox("Paneli otomatik gizle", False)
+        f1.addWidget(self.autohide_panel)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Widget'lar")
+        f2 = QVBoxLayout()
+        self.show_clock = make_checkbox("Saat widget'i goster", True)
+        f2.addWidget(self.show_clock)
+        self.show_battery = make_checkbox("Pil durumu widget'i goster", True)
+        f2.addWidget(self.show_battery)
+        self.show_trash = make_checkbox("Cop kutusu widget'i goster", False)
+        f2.addWidget(self.show_trash)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("Compositor (Efekt Motoru)")
+        f3 = QVBoxLayout()
+        self.compositor_enabled = make_checkbox("Compositor aktif", True)
+        f3.addWidget(self.compositor_enabled)
+        r3 = QHBoxLayout()
+        r3.addWidget(make_label("Saydamlik:"))
+        self.opacity_slider = make_slider(0, 100, 100)
+        r3.addWidget(self.opacity_slider)
+        f3.addLayout(r3)
+        r4 = QHBoxLayout()
+        r4.addWidget(make_label("Golge yuksekligi:"))
+        self.shadow_slider = make_slider(0, 48, 24)
+        r4.addWidget(self.shadow_slider)
+        f3.addLayout(r4)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Varsayilan", False))
+        btn_row.addWidget(make_button("Uygula", True))
+        layout.addLayout(btn_row)
+
+
+class PagePencere(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Pencere Ayarlari")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("Animasyonlar")
+        f1 = QVBoxLayout()
+        self.anim_enabled = make_checkbox("Pencere animasyonlarini aktif et", True)
+        f1.addWidget(self.anim_enabled)
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("Animasyon hizi:"))
+        self.anim_speed = make_combo(["Yavas", "Normal", "Hizli", "Kapali"])
+        self.anim_speed.setCurrentText("Normal")
+        r1.addWidget(self.anim_speed)
+        f1.addLayout(r1)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Baslik Cubugu Butonlari")
+        f2 = QVBoxLayout()
+        r2 = QHBoxLayout()
+        self.btn_close = make_checkbox("Kapat (X)", True)
+        self.btn_max = make_checkbox("Buyut ([])", True)
+        self.btn_min = make_checkbox("Kucult (_)", True)
+        r2.addWidget(self.btn_close)
+        r2.addWidget(self.btn_max)
+        r2.addWidget(self.btn_min)
+        f2.addLayout(r2)
+        self.btn_sticky = make_checkbox("Yapistir butonu goster", False)
+        f2.addWidget(self.btn_sticky)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("Pencere Odak Modeli")
+        f3 = QVBoxLayout()
+        self.focus_model = make_combo([
+            "Tiklama ile odaklan",
+            "Uzerine gelince odaklan",
+            "Sadece tiklama ile odaklan (sabit)"
+        ])
+        self.focus_model.setCurrentText("Tiklama ile odaklan")
+        f3.addWidget(self.focus_model)
+        self.raise_on_focus = make_checkbox("Odaklaninca pencereyi one getir", True)
+        f3.addWidget(self.raise_on_focus)
+        self.focus_follows_mouse = make_checkbox("Fareyi takip eden odak", False)
+        f3.addWidget(self.focus_follows_mouse)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        g4 = SettingsGroup("Pencere Davranisi")
+        f4 = QVBoxLayout()
+        self.snap_enabled = make_checkbox("Pencere yapistirmayi (snap) aktif et", True)
+        f4.addWidget(self.snap_enabled)
+        self.maximize_hover = make_checkbox("Baslik cubuguna cift tikla -> buyut", True)
+        f4.addWidget(self.maximize_hover)
+        self.wheel_workspace = make_checkbox("Fare tekerlegi ile calisma alani degistir", True)
+        f4.addWidget(self.wheel_workspace)
+        g4.setLayout(f4)
+        il.addWidget(g4)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Varsayilan", False))
+        btn_row.addWidget(make_button("Kaydet", True))
+        layout.addLayout(btn_row)
+
+
+class PageAg(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Ag Ayarlari")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("NetworkManager")
+        f1 = QVBoxLayout()
+        nm_active = systemctl_is_active("NetworkManager")
+        status_text = "Aktif" if nm_active else "Pasif"
+        status_color = "#00d4aa" if nm_active else "#ff4444"
+        self.nm_status = QLabel(f"Durum: <span style='color:{status_color}'><b>{status_text}</b></span>")
+        self.nm_status.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        self.nm_status.setTextFormat(Qt.TextFormat.RichText)
+        f1.addWidget(self.nm_status)
+        self.nm_enable = make_checkbox("NetworkManager servisini etkinlestir", nm_active)
+        f1.addWidget(self.nm_enable)
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("DNS sunucusu:"))
+        self.dns_input = make_line_edit("8.8.8.8")
+        self.dns_input.setText(run_cmd("resolvectl status 2>/dev/null | grep 'DNS Servers' | head -1 | awk '{print $3}'") or "8.8.8.8")
+        r1.addWidget(self.dns_input)
+        f1.addLayout(r1)
+        r2 = QHBoxLayout()
+        r2.addWidget(make_label("Yedek DNS:"))
+        self.dns2_input = make_line_edit("8.8.4.4")
+        r2.addWidget(self.dns2_input)
+        f1.addLayout(r2)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Proxy Ayarlari")
+        f2 = QVBoxLayout()
+        self.proxy_enabled = make_checkbox("Proxy kullan", False)
+        f2.addWidget(self.proxy_enabled)
+        r3 = QHBoxLayout()
+        r3.addWidget(make_label("Proxy tipi:"))
+        self.proxy_type = make_combo(["HTTP", "SOCKS5", "Socks4"])
+        r3.addWidget(self.proxy_type)
+        f2.addLayout(r3)
+        r4 = QHBoxLayout()
+        r4.addWidget(make_label("Adres:"))
+        self.proxy_host = make_line_edit("127.0.0.1")
+        r4.addWidget(self.proxy_host)
+        f2.addLayout(r4)
+        r5 = QHBoxLayout()
+        r5.addWidget(make_label("Port:"))
+        self.proxy_port = make_line_edit("1080")
+        r5.addWidget(self.proxy_port)
+        f2.addLayout(r5)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("Baglanti Ayarlari")
+        f3 = QVBoxLayout()
+        r6 = QHBoxLayout()
+        r6.addWidget(make_label("MTU:"))
+        self.mtu_input = make_spinbox(576, 9000, 1500)
+        r6.addWidget(self.mtu_input)
+        f3.addLayout(r6)
+        self.ipv6_disable = make_checkbox("IPv6 devre disi birak", False)
+        f3.addWidget(self.ipv6_disable)
+        self.wifi_power = make_checkbox("WiFi gucu kisitla (pil tasarrufu)", False)
+        f3.addWidget(self.wifi_power)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Ag Yenile", False))
+        btn_row.addWidget(make_button("Kaydet", True))
+        layout.addLayout(btn_row)
+
+
+class PageGuvenlik(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Guvenlik Ayarlari")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("Firewall (UFW)")
+        f1 = QVBoxLayout()
+        ufw_active = systemctl_is_active("ufw")
+        ufw_text = "Aktif" if ufw_active else "Pasif"
+        ufw_color = "#00d4aa" if ufw_active else "#ff4444"
+        self.ufw_status = QLabel(f"UFW Durumu: <span style='color:{ufw_color}'><b>{ufw_text}</b></span>")
+        self.ufw_status.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        self.ufw_status.setTextFormat(Qt.TextFormat.RichText)
+        f1.addWidget(self.ufw_status)
+        self.ufw_enable = make_checkbox("UFW firewall etkin", ufw_active)
+        f1.addWidget(self.ufw_enable)
+        self.ufw_log = make_checkbox("Firewall log kaydi tut", False)
+        f1.addWidget(self.ufw_log)
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("Varsayilan politika:"))
+        self.ufw_policy = make_combo(["Girisi Reddet", "Girisi Izin Ver", "Cikisi Reddet"])
+        r1.addWidget(self.ufw_policy)
+        f1.addLayout(r1)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Sudo Ayarlari")
+        f2 = QVBoxLayout()
+        self.sudo_nopass = make_checkbox("Kullanici grubu icin sifresiz sudo (NOPASSWD)", False)
+        f2.addWidget(self.sudo_nopass)
+        r2 = QHBoxLayout()
+        r2.addWidget(make_label("Sudo suresi (dk):"))
+        self.sudo_timeout = make_spinbox(1, 60, 5)
+        r2.addWidget(self.sudo_timeout)
+        f2.addLayout(r2)
+        self.sudo_timestamp = make_checkbox("Sudo zaman damgasi koru", True)
+        f2.addWidget(self.sudo_timestamp)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("Oturum Guvenligi")
+        f3 = QVBoxLayout()
+        self.autologin = make_checkbox("Oturum acma (auto-login) aktif", False)
+        f3.addWidget(self.autologin)
+        r3 = QHBoxLayout()
+        r3.addWidget(make_label("Oturum acacak kullanici:"))
+        self.autologin_user = make_line_edit(os.getenv("USER", ""))
+        r3.addWidget(self.autologin_user)
+        f3.addLayout(r3)
+        self.lock_screen = make_checkbox("Ekran kilitleme aktif", True)
+        f3.addWidget(self.lock_screen)
+        self.screen_blank_time = make_spinbox(1, 120, 10)
+        r4 = QHBoxLayout()
+        r4.addWidget(make_label("Ekran karartma suresi (dk):"))
+        r4.addWidget(self.screen_blank_time)
+        f3.addLayout(r4)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Durum Kontrol", False))
+        btn_row.addWidget(make_button("Kaydet", True))
+        layout.addLayout(btn_row)
+
+
+class PageSistem(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Sistem Ayarlari")
+        title.setStyleSheet(f"color: {ACCENT}; font-size: 18px; font-weight: bold; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        il = QVBoxLayout(inner)
+        il.setSpacing(14)
+
+        g1 = SettingsGroup("ZRAM (Sikistirilmis RAM)")
+        f1 = QVBoxLayout()
+        zram_active = systemctl_is_active("zramswap")
+        zram_text = "Aktif" if zram_active else "Pasif"
+        zram_color = "#00d4aa" if zram_active else "#ff4444"
+        self.zram_status = QLabel(f"ZRAM Durumu: <span style='color:{zram_color}'><b>{zram_text}</b></span>")
+        self.zram_status.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        self.zram_status.setTextFormat(Qt.TextFormat.RichText)
+        f1.addWidget(self.zram_status)
+        self.zram_enable = make_checkbox("ZRAM etkinlestir", zram_active)
+        f1.addWidget(self.zram_enable)
+        r1 = QHBoxLayout()
+        r1.addWidget(make_label("ZRAM boyutu (MB):"))
+        self.zram_size = make_spinbox(256, 32768, 4096)
+        r1.addWidget(self.zram_size)
+        f1.addLayout(r1)
+        g1.setLayout(f1)
+        il.addWidget(g1)
+
+        g2 = SettingsGroup("Swap")
+        f2 = QVBoxLayout()
+        swap_info = run_cmd("swapon --show --bytes | tail -1 | awk '{print $3}'")
+        swap_mb = int(int(swap_info) / 1024 / 1024) if swap_info.isdigit() and int(swap_info) > 0 else 0
+        self.swap_info_label = make_label(f"Mevcut swap: {swap_mb} MB")
+        f2.addWidget(self.swap_info_label)
+        r2 = QHBoxLayout()
+        r2.addWidget(make_label("Swap onceligi (swappiness):"))
+        self.swappiness = make_spinbox(0, 200, int(read_sysctl("vm.swappiness")) if read_sysctl("vm.swappiness").isdigit() else 60)
+        r2.addWidget(self.swappiness)
+        f2.addLayout(r2)
+        r3 = QHBoxLayout()
+        r3.addWidget(make_label("VFS cache onceligi:"))
+        self.vfs_cache = make_spinbox(0, 100, int(read_sysctl("vm.vfs_cache_pressure")) if read_sysctl("vm.vfs_cache_pressure").isdigit() else 100)
+        r3.addWidget(self.vfs_cache)
+        f2.addLayout(r3)
+        g2.setLayout(f2)
+        il.addWidget(g2)
+
+        g3 = SettingsGroup("CPU Governor")
+        f3 = QVBoxLayout()
+        current_gov = run_cmd("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null") or "Bilinmiyor"
+        r4 = QHBoxLayout()
+        r4.addWidget(make_label("CPU governor:"))
+        self.governor_combo = make_combo(["performance", "powersave", "ondemand", "schedutil", "conservative"], current_gov)
+        r4.addWidget(self.governor_combo)
+        f3.addLayout(r4)
+        self.turbo_check = make_checkbox("Turbo boost aktif", True)
+        f3.addWidget(self.turbo_check)
+        g3.setLayout(f3)
+        il.addWidget(g3)
+
+        g4 = SettingsGroup("Hostname")
+        f4 = QVBoxLayout()
+        current_hostname = run_cmd("hostname")
+        self.hostname_display = make_label(f"Mevcut hostname: {current_hostname}")
+        f4.addWidget(self.hostname_display)
+        r5 = QHBoxLayout()
+        r5.addWidget(make_label("Yeni hostname:"))
+        self.hostname_new = make_line_edit(current_hostname)
+        r5.addWidget(self.hostname_new)
+        f4.addLayout(r5)
+        g4.setLayout(f4)
+        il.addWidget(g4)
+
+        g5 = SettingsGroup("GRUB Ayarlari")
+        f5 = QVBoxLayout()
+        grub_path = "/etc/default/grub"
+        self.grub_path = grub_path
+        self.grub_content = read_file(grub_path)
+        if self.grub_content:
+            grub_lines = self.grub_content.splitlines()
+            timeout_val = "10"
+            for line in grub_lines:
+                if line.startswith("GRUB_TIMEOUT="):
+                    timeout_val = line.split("=")[1].strip().strip('"')
+                    break
+        else:
+            timeout_val = "10"
+        r6 = QHBoxLayout()
+        r6.addWidget(make_label("GRUB zaman asimi (sn):"))
+        self.grub_timeout = make_spinbox(0, 60, int(timeout_val) if timeout_val.isdigit() else 10)
+        r6.addWidget(self.grub_timeout)
+        f5.addLayout(r6)
+        self.grub_splash = make_checkbox("GRUB splash ekranini aktif et", True)
+        f5.addWidget(self.grub_splash)
+        self.grub_verbose = make_checkbox("Ayrintili (verbose) mod", False)
+        f5.addWidget(self.grub_verbose)
+        g5.setLayout(f5)
+        il.addWidget(g5)
+
+        il.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(make_button("Bilgi Yenile", False))
+        btn_row.addWidget(make_button("Kaydet", True))
+        layout.addLayout(btn_row)
+
+
+class HirokiTweaks(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Sistem Ayarlari")
+        self.setMinimumSize(750, 550)
+        self.resize(860, 620)
+        self._apply_palette()
+        self._build_ui()
+
+    def _apply_palette(self):
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_COLOR))
+        palette.setColor(QPalette.ColorRole.Base, QColor(BG_INPUT))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_CARD))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_COLOR))
+        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_COLOR))
+        palette.setColor(QPalette.ColorRole.Button, QColor(BG_CARD))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_COLOR))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        QApplication.instance().setPalette(palette)
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        central.setStyleSheet(f"background-color: {BG_DARK};")
+
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setFixedWidth(210)
+        sidebar.setStyleSheet(f"""
+            QFrame {{
+                background-color: #0d0d0d;
+                border-right: 1px solid {BORDER_COLOR};
+            }}
+        """)
+        sb_layout = QVBoxLayout(sidebar)
+        sb_layout.setContentsMargins(12, 16, 12, 16)
+        sb_layout.setSpacing(4)
+
+        logo_label = QLabel("Hiroki OS")
+        logo_label.setStyleSheet(f"""
+            color: {ACCENT};
+            font-size: 20px;
+            font-weight: bold;
+            padding: 8px 4px;
+            padding-bottom: 4px;
+        """)
+        sb_layout.addWidget(logo_label)
+
+        subtitle = QLabel("Sistem Ayarlari")
+        subtitle.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; padding: 0 4px 12px 4px;")
+        sb_layout.addWidget(subtitle)
+        sb_layout.addWidget(sep())
+
+        self.categories = [
+            ("Genel", "Genel"),
+            ("Masaustu", "Masaustu"),
+            ("Pencere", "Pencere"),
+            ("Ag", "Ag"),
+            ("Guvenlik", "Guvenlik"),
+            ("Sistem", "Sistem"),
+        ]
+
+        self.side_buttons = []
+        for text, _ in self.categories:
+            btn = SideButton(f"  {text}")
+            btn.clicked.connect(lambda checked, b=btn: self._on_category_click(b))
+            sb_layout.addWidget(btn)
+            self.side_buttons.append(btn)
+
+        sb_layout.addStretch()
+
+        version_lbl = QLabel("v1.0.0")
+        version_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 10px; padding: 4px;")
+        sb_layout.addWidget(version_lbl)
+
+        main_layout.addWidget(sidebar)
+
+        right_panel = QFrame()
+        right_panel.setStyleSheet(f"background-color: {BG_DARK};")
+        rp_layout = QVBoxLayout(right_panel)
+        rp_layout.setContentsMargins(0, 0, 0, 0)
+        rp_layout.setSpacing(0)
+
+        header = QFrame()
+        header.setFixedHeight(52)
+        header.setStyleSheet(f"""
+            QFrame {{
+                background-color: #0d0d0d;
+                border-bottom: 1px solid {BORDER_COLOR};
+            }}
+        """)
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(20, 0, 20, 0)
+        self.header_title = QLabel("Sistem Ayarlari")
+        self.header_title.setStyleSheet(f"color: {ACCENT}; font-size: 16px; font-weight: bold;")
+        h_layout.addWidget(self.header_title)
+        h_layout.addStretch()
+        rp_layout.addWidget(header)
+
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet(f"QStackedWidget {{ background-color: {BG_DARK}; }}")
+
+        self.page_genel = PageGenel()
+        self.page_masaustu = PageMasaustu()
+        self.page_pencere = PagePencere()
+        self.page_ag = PageAg()
+        self.page_guvenlik = PageGuvenlik()
+        self.page_sistem = PageSistem()
+
+        self.stack.addWidget(self.page_genel)
+        self.stack.addWidget(self.page_masaustu)
+        self.stack.addWidget(self.page_pencere)
+        self.stack.addWidget(self.page_ag)
+        self.stack.addWidget(self.page_guvenlik)
+        self.stack.addWidget(self.page_sistem)
+
+        rp_layout.addWidget(self.stack, 1)
+        main_layout.addWidget(right_panel, 1)
+
+        self.side_buttons[0].setChecked(True)
+        self._on_category_click(self.side_buttons[0])
+
+    def _on_category_click(self, clicked_btn):
+        for i, btn in enumerate(self.side_buttons):
+            if btn is clicked_btn:
+                btn.setChecked(True)
+                self.stack.setCurrentIndex(i)
+                self.header_title.setText(self.categories[i][1])
+            else:
+                btn.setChecked(False)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setStyleSheet(f"""
+        * {{
+            font-family: "Segoe UI", "Noto Sans", "DejaVu Sans", sans-serif;
+            font-size: 12px;
+        }}
+        QToolTip {{
+            background-color: {BG_CARD};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDER_COLOR};
+            padding: 6px;
+            border-radius: 4px;
+        }}
+        QScrollBar:vertical {{
+            background: {BG_DARK};
+            width: 10px;
+            margin: 0;
+        }}
+        QScrollBar::handle:vertical {{
+            background: #444444;
+            min-height: 30px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: {ACCENT};
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0;
+        }}
+        QScrollBar:horizontal {{
+            background: {BG_DARK};
+            height: 10px;
+            margin: 0;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: #444444;
+            min-width: 30px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background: {ACCENT};
+        }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            width: 0;
+        }}
+    """)
+    window = HirokiTweaks()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

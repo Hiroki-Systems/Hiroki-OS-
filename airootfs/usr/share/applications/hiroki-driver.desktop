@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Surucu Yoneticisi
+Name[tr]=Hiroki Surucu Yoneticisi
+Comment=GPU ve surucu kurulum yoneticisi
+Comment[tr]=GPU ve surucu kurulum yoneticisi
+Exec=hiroki-driver
+Icon=preferences-hardware
+Terminal=false
+Categories=System;
+StartupNotify=true

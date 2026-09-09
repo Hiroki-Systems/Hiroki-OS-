@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Hiroki Hoş Geldiniz
+Name[tr]=Hiroki Hoş Geldiniz
+Name[en]=Hiroki Welcome
+GenericName=Welcome Center
+Comment=Hiroki OS karşılama ve kurulum asistanı
+Comment[tr]=Hiroki OS karşılama ve kurulum asistanı
+Exec=hiroki-welcome --force
+Icon=hiroki-icon
+Terminal=false
+Type=Application
+Categories=Utility;GTK;
+Keywords=hiroki;welcome;setup;
+StartupNotify=true

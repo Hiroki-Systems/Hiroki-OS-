@@ -1,0 +1,9 @@
+[Unit]
+Description=Hiroki OS - 90 saniye sonra otomatik snapshot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/hiroki-boot-snapshot
+User=root

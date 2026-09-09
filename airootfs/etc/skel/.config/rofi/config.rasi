@@ -1,0 +1,80 @@
+/* Rofi — Tokyo Night theme */
+configuration {
+    modi: "drun,run,window";
+    show-icons: true;
+    icon-theme: "Papirus";
+    font: "Sans 14";
+    display-drun: "  Apps";
+    display-run: "  Run";
+    display-window: "  Windows";
+    drun-display-format: "{name}";
+    terminal: "alacritty";
+}
+
+* {
+    bg:     #1a1b26d9;
+    bg-alt: #16161ed9;
+    fg:     #c0caf5;
+    fg-dim: #565f89;
+    accent: #7aa2f7;
+    urgent: #f7768e;
+
+    background-color: @bg;
+    text-color: @fg;
+}
+
+window {
+    width: 600px;
+    border: 2px;
+    border-color: @accent;
+    border-radius: 12px;
+    padding: 0;
+}
+
+mainbox {
+    children: [ inputbar, listview ];
+    padding: 12px;
+}
+
+inputbar {
+    children: [ prompt, entry ];
+    padding: 8px 12px;
+    border-radius: 8px;
+    background-color: @bg-alt;
+}
+
+prompt {
+    text-color: @accent;
+    padding: 0 8px 0 0;
+}
+
+entry {
+    placeholder: "Search...";
+    placeholder-color: @fg-dim;
+}
+
+listview {
+    lines: 8;
+    columns: 1;
+    padding: 8px 0 0 0;
+    spacing: 4px;
+}
+
+element {
+    padding: 8px 12px;
+    border-radius: 6px;
+}
+
+element selected {
+    background-color: @accent;
+    text-color: @bg;
+}
+
+element-icon {
+    size: 28px;
+    padding: 0 8px 0 0;
+}
+
+element-text {
+    padding: 0;
+}

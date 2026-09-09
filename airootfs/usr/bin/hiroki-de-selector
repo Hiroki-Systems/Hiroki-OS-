@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Hiroki OS - DE Selector Wrapper
+# Sakura 1.0
+
+set -e
+
+# Donanım algılamayı yenile
+/usr/bin/hiroki-hw-detect >/dev/null 2>&1 || true
+
+# Python GUI'yi başlat
+exec /usr/bin/python3 /usr/share/hiroki/de-selector/hiroki-de-selector.py "$@"

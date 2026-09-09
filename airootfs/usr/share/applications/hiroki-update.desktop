@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Guncelleme
+Name[tr]=Hiroki Guncelleme
+Comment=Sistem guncelleme merkezi
+Comment[tr]=Sistem guncelleme merkezi
+Exec=hiroki-update
+Icon=system-software-update
+Terminal=false
+Categories=System;
+StartupNotify=true

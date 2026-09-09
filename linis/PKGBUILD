@@ -1,0 +1,31 @@
+# Maintainer: Hiroki <hiroki@example.org>
+# Linis Window Manager — Tokyo Night rice X11 WM (Arch PKGBUILD)
+
+pkgname=linis-wm
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Linis Window Manager - Tokyo Night rice style X11 WM (built-in compositor)"
+arch=('x86_64')
+url="https://example.org/linis"
+license=('MIT')
+depends=('libx11' 'libxrender' 'libxcomposite' 'libxdamage' 'libxfixes'
+         'libxext' 'libxrandr' 'libxinerama' 'libxft' 'fontconfig'
+         'freetype2')
+makedepends=('gcc' 'make')
+optdepends=('feh: duvar kağıdı ayarlama'
+            'dunst: bildirimler'
+            'nm-applet: ağ tepsi aracı'
+            'pavucontrol: ses'
+            'xfce4-terminal: varsayılan terminal')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    make
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    make DESTDIR="$pkgdir" install
+}

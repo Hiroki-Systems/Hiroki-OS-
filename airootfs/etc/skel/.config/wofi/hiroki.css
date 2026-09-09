@@ -1,0 +1,24 @@
+/* Hiroki OS - Wofi (Hyprland launcher) */
+window {
+  background-color: #0D0D1A;
+  border: 2px solid #E91E8C;
+  border-radius: 12px;
+  font-family: Inter;
+}
+#input {
+  background-color: #1A1A2E;
+  color: #EAEAEA;
+  border: 1px solid #2D1B69;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px;
+}
+#inner-box { background: transparent; }
+#outer-box { margin: 8px; }
+#entry:selected {
+  background-color: #2D1B69;
+  color: #EAEAEA;
+  border-left: 3px solid #E91E8C;
+}
+#text { color: #EAEAEA; }
+#text:selected { color: white; }

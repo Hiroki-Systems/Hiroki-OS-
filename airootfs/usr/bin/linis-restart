@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# linis-restart — WM'i yerinde yeniden başlatır.
+# SIGHUP → linis do_restart bayrağı kurar, mevcut kapanınca yeniden açar.
+
+pid="$(pgrep -x linis | head -1)"
+if [ -z "$pid" ]; then
+  echo "linis çalışmıyor" >&2
+  exit 1
+fi
+kill -HUP "$pid"
+exit 0

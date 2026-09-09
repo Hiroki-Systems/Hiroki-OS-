@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Welcome
+Name[tr]=Hiroki Hoş Geldiniz
+Exec=hiroki-welcome
+Icon=hiroki-icon
+Comment=Show welcome center on first boot
+X-GNOME-Autostart-enabled=true
+Hidden=false
+NoDisplay=false

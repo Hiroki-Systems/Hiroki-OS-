@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Hiroki OS - ~/.xinitrc Oluşturucu
+# Seçilen masaüstü ortamına uygun başlatıcı komutunu ~/.xinitrc dosyasına yazar.
+# Kullanım: hiroki-dm-xinit [de]   (de verilmezse /etc/hiroki/selected-de okunur)
+set -euo pipefail
+
+SELECTED_DE_FILE="/etc/hiroki/selected-de"
+DEFAULT_DE="xfce"
+
+DE="${1:-}"
+if [[ -z "$DE" ]]; then
+    DE="${HIROKI_DE:-}"
+fi
+if [[ -z "$DE" && -r "$SELECTED_DE_FILE" ]]; then
+    DE="$(tr -d '[:space:]' < "$SELECTED_DE_FILE")"
+fi
+[[ -z "$DE" ]] && DE="$DEFAULT_DE"
+
+START="exec startxfce4"
+case "$DE" in
+    xfce|xfce4)      START="exec startxfce4" ;;
+    mate)            START="exec mate-session" ;;
+    cinnamon)        START="exec cinnamon-session" ;;
+    kde|plasma)      START="exec startkde" ;;
+    gnome)           START="exec gnome-session" ;;
+    lxqt)            START="exec startlxqt" ;;
+    lxde)            START="exec startlxde" ;;
+    openbox)         START="exec openbox-session" ;;
+    i3|i3wm)         START="exec i3" ;;
+    budgie)          START="exec budgie-session" ;;
+    *)               START="exec startxfce4" ;;
+esac
+
+XINITRC="${HOME}/.xinitrc"
+cat > "$XINITRC" <<EOF
+#!/bin/sh
+# Hiroki OS ${DE} oturumu (hiroki-dm-xinit tarafindan olusturuldu)
+${START}
+EOF
+chmod +x "$XINITRC" 2>/dev/null || true
+printf '%s\n' "$DE"

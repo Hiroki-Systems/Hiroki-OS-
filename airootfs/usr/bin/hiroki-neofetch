@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Hiroki OS - System info with PNG logo"""
+import os, subprocess, sys
+
+BOLD = "\033[1m"
+CYAN = "\033[38;2;0;200;200m"
+PINK = "\033[38;2;211;65;136m"
+RESET = "\033[0m"
+DIM = "\033[2m"
+WHITE = "\033[38;2;230;230;230m"
+
+def get_info():
+    info = []
+    try:
+        with open("/etc/os-release") as f:
+            for l in f:
+                if l.startswith("PRETTY_NAME="):
+                    info.append(("OS", l.split("=",1)[1].strip().strip('"')))
+    except: info.append(("OS", "Hiroki OS"))
+    info.append(("Kernel", subprocess.getoutput("uname -r")))
+    try:
+        with open("/proc/uptime") as f:
+            s = float(f.read().split()[0])
+            d,h,m = int(s//86400), int(s%86400//3600), int(s%3600//60)
+            p = []
+            if d: p.append(f"{d}d")
+            if h: p.append(f"{h}h")
+            p.append(f"{m}m")
+            info.append(("Uptime", " ".join(p)))
+    except: info.append(("Uptime", "?"))
+    try:
+        c = subprocess.getoutput("pacman -Q 2>/dev/null | wc -l").strip()
+        info.append(("Packages", f"{c} (pacman)"))
+    except: info.append(("Packages", "?"))
+    info.append(("Shell", os.environ.get("SHELL","bash").split("/")[-1]))
+    de = os.environ.get("XDG_SESSION_DESKTOP","")
+    if not de: de = "KDE Plasma"
+    info.append(("DE", de))
+    try:
+        wm = subprocess.getoutput("ps -eo comm | grep kwin | grep -v grep | head -1").strip()
+        info.append(("WM", wm if wm else "KWin"))
+    except: info.append(("WM", "KWin"))
+    try:
+        with open("/proc/cpuinfo") as f:
+            for l in f:
+                if "model name" in l:
+                    info.append(("CPU", l.split(":")[1].strip()))
+                    break
+    except: pass
+    try:
+        with open("/proc/meminfo") as f: lines = f.readlines()
+        t = int(lines[0].split()[1])//1024
+        a = int(lines[2].split()[1])//1024
+        u = t-a
+        info.append(("Memory", f"{u}MiB / {t}MiB ({u*100//t}%)"))
+    except: pass
+    try:
+        st = os.statvfs("/")
+        t = st.f_blocks*st.f_frsize//(1024**3)
+        fr = st.f_bavail*st.f_frsize//(1024**3)
+        u = t-fr
+        info.append(("Disk", f"{u}G / {t}G ({u*100//max(t,1)}%)"))
+    except: pass
+    return info
+
+def render_chafa(logo_path, width=20):
+    """Use chafa to render PNG to terminal-friendly character art"""
+    try:
+        result = subprocess.run(
+            ["chafa", "--size", f"{width}x", "--colors", "256", logo_path],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.rstrip("\n").split("\n")
+    except: pass
+    return None
+
+def render_pil_fallback(logo_path, width=20):
+    """Fallback: render PNG as colored blocks using PIL"""
+    from PIL import Image
+    img = Image.open(logo_path).convert("RGBA")
+    w, h = img.size
+    ratio = h / w
+    nw = width
+    nh = max(1, int(nw * ratio * 0.5))
+    img = img.resize((nw, nh), Image.LANCZOS)
+    px = img.load()
+    
+    lines = []
+    for y in range(nh):
+        line = ""
+        for x in range(nw):
+            r, g, b, a = px[x, y]
+            if a < 128:
+                line += " "
+            else:
+                line += f"\033[48;2;{r};{g};{b}m "
+        line += "\033[0m"
+        lines.append(line)
+    return lines
+
+def main():
+    logo_path = "/usr/share/hiroki/hiroki-logo.png"
+    if len(sys.argv) > 1:
+        logo_path = sys.argv[1]
+
+    info = get_info()
+    info_lines = []
+    for key, val in info:
+        info_lines.append(f"  {CYAN}{key}{RESET}  {DIM}={RESET}  {WHITE}{val}{RESET}")
+
+    # Logo - trim empty lines
+    logo_lines = None
+    if os.path.exists(logo_path):
+        logo_lines = render_chafa(logo_path, 24)
+        if not logo_lines:
+            logo_lines = render_pil_fallback(logo_path, 24)
+        if logo_lines:
+            import re
+            trimmed = []
+            for l in logo_lines:
+                clean = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', l).strip()
+                if clean:
+                    trimmed.append(l)
+            if trimmed:
+                logo_lines = trimmed
+
+    if logo_lines:
+        for i in range(max(len(logo_lines), len(info_lines))):
+            left = logo_lines[i] if i < len(logo_lines) else ""
+            right = info_lines[i] if i < len(info_lines) else ""
+            # Strip ANSI for padding calc
+            import re
+            clean = re.sub(r'\033\[[0-9;]*m', '', left)
+            pad = max(2, 48 - len(clean))
+            print(f"{left}{' ' * pad}{right}")
+    else:
+        for line in info_lines:
+            print(line)
+    print()
+
+if __name__ == "__main__":
+    main()

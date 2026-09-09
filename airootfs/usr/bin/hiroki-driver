@@ -1,0 +1,892 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Hiroki OS - Surucu Yoneticisi (PyQt6)
+
+import subprocess
+import re
+import sys
+import os
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QProgressBar, QTableWidget, QTableWidgetItem,
+    QHeaderView, QMessageBox, QFrame, QSizePolicy, QTextEdit, QTabWidget,
+    QSplitter, QGroupBox, QRadioButton, QButtonGroup
+)
+from PyQt6.QtCore import (
+    Qt, QThread, pyqtSignal, QSize, QTimer, QPropertyAnimation,
+    QEasingCurve
+)
+from PyQt6.QtGui import (
+    QFont, QColor, QPalette, QIcon, QBrush, QLinearGradient,
+    QPainter, QPalette, QPixmap
+)
+
+
+ACCENT = "#d34188"
+ACCENT_LIGHT = "#e85fa0"
+BG_DARK = "#111111"
+BG_CARD = "#1a1a1a"
+BG_CARD_HOVER = "#222222"
+BG_INPUT = "#1e1e1e"
+TEXT_PRIMARY = "#e0e0e0"
+TEXT_SECONDARY = "#888888"
+TEXT_MUTED = "#555555"
+GREEN = "#4caf50"
+RED = "#f44336"
+ORANGE = "#ff9800"
+BLUE = "#2196f3"
+BORDER_COLOR = "#2a2a2a"
+
+STYLESHEET = f"""
+QMainWindow {{
+    background-color: {BG_DARK};
+}}
+QWidget {{
+    background-color: {BG_DARK};
+    color: {TEXT_PRIMARY};
+    font-family: "Segoe UI", "Noto Sans", sans-serif;
+    font-size: 13px;
+}}
+QLabel {{
+    color: {TEXT_PRIMARY};
+    background: transparent;
+}}
+QGroupBox {{
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 16px 12px 12px 12px;
+    font-weight: bold;
+    color: {TEXT_PRIMARY};
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px;
+    padding: 0 6px;
+    color: {ACCENT};
+    font-size: 13px;
+}}
+QPushButton {{
+    background-color: {BG_CARD};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-weight: bold;
+    min-height: 20px;
+}}
+QPushButton:hover {{
+    background-color: {BG_CARD_HOVER};
+    border-color: #444;
+}}
+QPushButton:pressed {{
+    background-color: #2c2c2c;
+}}
+QPushButton#installBtn {{
+    background-color: {ACCENT};
+    color: #ffffff;
+    border: none;
+}}
+QPushButton#installBtn:hover {{
+    background-color: {ACCENT_LIGHT};
+}}
+QPushButton#removeBtn {{
+    background-color: #333;
+    color: {RED};
+    border: 1px solid {RED};
+}}
+QPushButton#removeBtn:hover {{
+    background-color: #3a1a1a;
+}}
+QPushButton#detectBtn {{
+    background-color: #1a1a2e;
+    color: {BLUE};
+    border: 1px solid {BLUE};
+}}
+QPushButton#detectBtn:hover {{
+    background-color: #1a2a3e;
+}}
+QPushButton#rebootBtn {{
+    background-color: #2a1a0a;
+    color: {ORANGE};
+    border: 1px solid {ORANGE};
+}}
+QPushButton#rebootBtn:hover {{
+    background-color: #3a2a1a;
+}}
+QTableWidget {{
+    background-color: {BG_CARD};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    gridline-color: {BORDER_COLOR};
+    selection-background-color: #2a1a2a;
+    selection-color: {TEXT_PRIMARY};
+    font-size: 12px;
+}}
+QTableWidget::item {{
+    padding: 6px 10px;
+    border-bottom: 1px solid {BORDER_COLOR};
+}}
+QTableWidget::item:selected {{
+    background-color: #2a1a2a;
+}}
+QHeaderView::section {{
+    background-color: #151515;
+    color: {ACCENT};
+    border: none;
+    border-bottom: 2px solid {ACCENT};
+    padding: 8px 10px;
+    font-weight: bold;
+    font-size: 12px;
+}}
+QProgressBar {{
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+    background-color: {BG_CARD};
+    text-align: center;
+    color: {TEXT_PRIMARY};
+    min-height: 22px;
+    font-weight: bold;
+}}
+QProgressBar::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {ACCENT}, stop:1 #a02060);
+    border-radius: 3px;
+}}
+QTextEdit {{
+    background-color: {BG_CARD};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 8px;
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 11px;
+}}
+QSplitter::handle {{
+    background-color: {BORDER_COLOR};
+    height: 2px;
+}}
+QTabWidget::pane {{
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    background: {BG_CARD};
+}}
+QTabBar::tab {{
+    background: {BG_CARD};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BORDER_COLOR};
+    padding: 8px 20px;
+    margin-right: 2px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}}
+QTabBar::tab:selected {{
+    background: {BG_DARK};
+    color: {ACCENT};
+    border-bottom-color: {BG_DARK};
+    font-weight: bold;
+}}
+QTabBar::tab:hover {{
+    color: {TEXT_PRIMARY};
+}}
+QScrollBar:vertical {{
+    background: {BG_DARK};
+    width: 8px;
+    border: none;
+}}
+QScrollBar::handle:vertical {{
+    background: #333;
+    border-radius: 4px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: #444;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar:horizontal {{
+    background: {BG_DARK};
+    height: 8px;
+}}
+QScrollBar::handle:horizontal {{
+    background: #333;
+    border-radius: 4px;
+    min-width: 30px;
+}}
+"""
+
+
+class WorkerThread(QThread):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, packages, action="install"):
+        super().__init__()
+        self.packages = packages
+        self.action = action
+
+    def run(self):
+        try:
+            if self.action == "install":
+                cmd = ["pacman", "-S", "--noconfirm", "--needed"] + self.packages
+            else:
+                cmd = ["pacman", "-R", "--noconfirm", "--noscriptlet"] + self.packages
+
+            self.progress.emit(10, f"Komut calistiriliyor: {' '.join(cmd)}")
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            output_lines = []
+            total = len(self.packages) if self.action == "install" else len(self.packages)
+            current = 0
+
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                output_lines.append(line)
+
+                if "installing" in line.lower() or "yukleniyor" in line.lower():
+                    current += 1
+                    pct = min(90, int((current / max(total, 1)) * 80) + 10)
+                    self.progress.emit(pct, line)
+                elif "downloading" in line.lower():
+                    self.progress.emit(min(60, current * 5 + 10), line)
+                elif "checking" in line.lower():
+                    self.progress.emit(5, line)
+                else:
+                    self.progress.emit(min(85, max(10, int(self.progress_sig_val))), line)
+
+            process.wait()
+
+            if process.returncode == 0:
+                self.progress.emit(100, "Islem basarili!")
+                self.finished.emit(True, "\n".join(output_lines[-10:]))
+            else:
+                err = "\n".join(output_lines[-20:])
+                self.finished.emit(False, f"Hata (kod {process.returncode}):\n{err}")
+
+        except FileNotFoundError:
+            self.finished.emit(False, "HATA: pacman bulunamadi. Root yetkisi gerekebilir.")
+        except Exception as e:
+            self.finished.emit(False, f"Beklenmeyen hata: {str(e)}")
+
+    @property
+    def progress_sig_val(self):
+        return 50
+
+
+class GPUInfo:
+    GPU_TYPE_UNKNOWN = "unknown"
+    GPU_TYPE_NVIDIA = "nvidia"
+    GPU_TYPE_AMD = "amd"
+    GPU_TYPE_INTEL = "intel"
+
+    DRIVER_MAP = {
+        GPU_TYPE_NVIDIA: [
+            {"name": "NVIDIA (Proprietary)", "pkg": "nvidia", "desc": "NVIDIA ozel surucu"},
+            {"name": "NVIDIA DKMS", "pkg": "nvidia-dkms", "desc": "NVIDIA DKMS tabanli surucu"},
+            {"name": "NVIDIA Yardimci", "pkg": "nvidia-utils", "desc": "NVIDIA yardimci araclari"},
+            {"name": "NVIDIA 32-bit", "pkg": "lib32-nvidia-utils", "desc": "32-bit NVIDIA destegi (Wine/Steam)"},
+        ],
+        GPU_TYPE_AMD: [
+            {"name": "Mesa (AMD)", "pkg": "mesa", "desc": "Mesa OpenGL/Vulkan AMD destegi"},
+            {"name": "Vulkan Radeon", "pkg": "vulkan-radeon", "desc": "AMD Vulkan surucu (RADV)"},
+            {"name": "AMDGPU Xorg", "pkg": "xf86-video-amdgpu", "desc": "AMD Xorg surucu"},
+            {"name": "Mesa 32-bit", "pkg": "lib32-mesa", "desc": "32-bit Mesa destegi (Wine/Steam)"},
+        ],
+        GPU_TYPE_INTEL: [
+            {"name": "Mesa (Intel)", "pkg": "mesa", "desc": "Mesa OpenGL/Vulkan Intel destegi"},
+            {"name": "Vulkan Intel", "pkg": "vulkan-intel", "desc": "Intel Vulkan surucu (ANV)"},
+            {"name": "Intel Xorg", "pkg": "xf86-video-intel", "desc": "Intel Xorg surucu"},
+            {"name": "Mesa 32-bit", "pkg": "lib32-mesa", "desc": "32-bit Mesa destegi (Wine/Steam)"},
+        ],
+    }
+
+    @staticmethod
+    def detect_gpu():
+        try:
+            result = subprocess.run(
+                ["lspci"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                lower = line.lower()
+                if "vga" in lower or "3d" in lower or "display" in lower:
+                    if "nvidia" in lower or "geforce" in lower or "quadro" in lower or "tesla" in lower or "rtx" in lower or "gtx" in lower:
+                        return line.strip(), GPUInfo.GPU_TYPE_NVIDIA
+                    elif "amd" in lower or "ati" in lower or "radeon" in lower or "navi" in lower or "rdna" in lower:
+                        return line.strip(), GPUInfo.GPU_TYPE_AMD
+                    elif "intel" in lower or "uhd" in lower or "iris" in lower or "hd graphics" in lower:
+                        return line.strip(), GPUInfo.GPU_TYPE_INTEL
+                    else:
+                        return line.strip(), GPUInfo.GPU_TYPE_UNKNOWN
+        except Exception:
+            pass
+        return "GPU tespit edilemedi", GPUInfo.GPU_TYPE_UNKNOWN
+
+    @staticmethod
+    def get_gpu_type_label(gpu_type):
+        labels = {
+            GPUInfo.GPU_TYPE_NVIDIA: "NVIDIA",
+            GPUInfo.GPU_TYPE_AMD: "AMD / Radeon",
+            GPUInfo.GPU_TYPE_INTEL: "Intel",
+            GPUInfo.GPU_TYPE_UNKNOWN: "Bilinmeyen",
+        }
+        return labels.get(gpu_type, "Bilinmeyen")
+
+    @staticmethod
+    def is_package_installed(pkg):
+        try:
+            result = subprocess.run(
+                ["pacman", "-Qi", pkg],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def get_package_version(pkg):
+        try:
+            result = subprocess.run(
+                ["pacman", "-Qi", pkg],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("Version"):
+                    return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "-"
+
+    @staticmethod
+    def get_available_version(pkg):
+        try:
+            result = subprocess.run(
+                ["pacman", "-Si", pkg],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("Version"):
+                    return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "-"
+
+
+class HeaderWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(80)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(20, 12, 20, 8)
+
+        title = QLabel("Hiroki OS")
+        title.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {ACCENT}; letter-spacing: 1px;")
+        self.layout.addWidget(title)
+
+        subtitle = QLabel("Surucu Yoneticisi")
+        subtitle.setStyleSheet(f"font-size: 14px; color: {TEXT_SECONDARY}; font-weight: normal; margin-top: -2px;")
+        self.layout.addWidget(subtitle)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        grad = QLinearGradient(0, 0, self.width(), 0)
+        grad.setColorAt(0, QColor(ACCENT))
+        grad.setColorAt(1, QColor("#a02060"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(grad)
+        painter.drawRect(0, self.height() - 2, self.width(), 2)
+        painter.end()
+
+
+class GPUDisplayWidget(QGroupBox):
+    def __init__(self, parent=None):
+        super().__init__("Tespit Edilen GPU", parent)
+        self.layout = QVBoxLayout(self)
+
+        self.gpu_name_label = QLabel("Taranıyor...")
+        self.gpu_name_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {TEXT_PRIMARY};")
+        self.gpu_name_label.setWordWrap(True)
+        self.layout.addWidget(self.gpu_name_label)
+
+        self.gpu_type_label = QLabel("")
+        self.gpu_type_label.setStyleSheet(f"font-size: 12px; color: {ACCENT}; font-weight: bold;")
+        self.layout.addWidget(self.gpu_type_label)
+
+        info_layout = QHBoxLayout()
+        self.status_dot = QLabel("●")
+        self.status_dot.setStyleSheet(f"color: {ORANGE}; font-size: 14px;")
+        info_layout.addWidget(self.status_dot)
+
+        self.status_label = QLabel("Taraniyor...")
+        self.status_label.setStyleSheet(f"font-size: 12px; color: {TEXT_SECONDARY};")
+        info_layout.addWidget(self.status_label)
+        info_layout.addStretch()
+
+        self.layout.addLayout(info_layout)
+
+    def set_gpu(self, name, gpu_type):
+        self.gpu_name_label.setText(name)
+        type_label = GPUInfo.get_gpu_type_label(gpu_type)
+        self.gpu_type_label.setText(f"Tur: {type_label}")
+
+        if gpu_type != GPUInfo.GPU_TYPE_UNKNOWN:
+            self.status_dot.setStyleSheet(f"color: {GREEN}; font-size: 14px;")
+            self.status_label.setText("GPU basariyla tespit edildi")
+        else:
+            self.status_dot.setStyleSheet(f"color: {RED}; font-size: 14px;")
+            self.status_label.setText("GPU turu taninamadi - genel suruculer gosteriliyor")
+
+
+class DriverTableWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Durum", "Surucu Adi", "Paket", "Surum", "Aciklama"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().resizeSection(0, 70)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().resizeSection(2, 160)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().resizeSection(3, 130)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                alternate-background-color: #141414;
+            }}
+        """)
+
+        self.layout.addWidget(self.table)
+        self.driver_data = []
+        self.selected_packages = set()
+
+    def populate(self, drivers):
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(drivers))
+        self.driver_data = drivers
+        self.selected_packages = set()
+
+        for row, drv in enumerate(drivers):
+            installed = GPUInfo.is_package_installed(drv["pkg"])
+            version = GPUInfo.get_package_version(drv["pkg"]) if installed else "-"
+            avail = GPUInfo.get_available_version(drv["pkg"])
+
+            status_item = QTableWidgetItem()
+            if installed:
+                status_item.setText("Yuklu")
+                status_item.setForeground(QBrush(QColor(GREEN)))
+            else:
+                status_item.setText("Yuklu Degil")
+                status_item.setForeground(QBrush(QColor(TEXT_MUTED)))
+
+            name_item = QTableWidgetItem(drv["name"])
+            name_item.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+
+            pkg_item = QTableWidgetItem(drv["pkg"])
+            pkg_item.setForeground(QBrush(QColor(ACCENT)))
+
+            ver_text = f"{version}" if installed else f"{avail}"
+            ver_item = QTableWidgetItem(ver_text)
+            if installed:
+                ver_item.setForeground(QBrush(QColor(GREEN)))
+            else:
+                ver_item.setForeground(QBrush(QColor(TEXT_SECONDARY)))
+
+            desc_item = QTableWidgetItem(drv["desc"])
+            desc_item.setForeground(QBrush(QBrush(QColor(TEXT_SECONDARY))))
+
+            self.table.setItem(row, 0, status_item)
+            self.table.setItem(row, 1, name_item)
+            self.table.setItem(row, 2, pkg_item)
+            self.table.setItem(row, 3, ver_item)
+            self.table.setItem(row, 4, desc_item)
+
+            self.table.setRowHeight(row, 44)
+
+    def get_selected_packages(self):
+        packages = []
+        for idx in self.table.selectionModel().selectedRows():
+            row = idx.row()
+            if row < len(self.driver_data):
+                packages.append(self.driver_data[row]["pkg"])
+        return packages
+
+    def get_installed_packages(self):
+        pkgs = []
+        for drv in self.driver_data:
+            if GPUInfo.is_package_installed(drv["pkg"]):
+                pkgs.append(drv["pkg"])
+        return pkgs
+
+
+class LogWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        header = QLabel("Islem Logu")
+        header.setStyleSheet(f"font-weight: bold; color: {ACCENT}; font-size: 12px; margin-bottom: 4px;")
+        self.layout.addWidget(header)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(100)
+        self.layout.addWidget(self.log_text)
+
+        clear_btn = QPushButton("Logu Temizle")
+        clear_btn.setFixedWidth(110)
+        clear_btn.clicked.connect(self.log_text.clear)
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(clear_btn)
+        self.layout.addLayout(btn_layout)
+
+    def append(self, text, color=TEXT_SECONDARY):
+        self.log_text.setTextColor(QColor(color))
+        self.log_text.append(text)
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum()
+        )
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Surucu Yoneticisi")
+        self.setMinimumSize(650, 450)
+        self.resize(750, 580)
+        self.worker = None
+        self.gpu_name = ""
+        self.gpu_type = GPUInfo.GPU_TYPE_UNKNOWN
+        self.needs_reboot = False
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        header = HeaderWidget()
+        main_layout.addWidget(header)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 12, 16, 12)
+        content_layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+
+        self.gpu_display = GPUDisplayWidget()
+        top_row.addWidget(self.gpu_display, 3)
+
+        action_group = QGroupBox("Islemler")
+        action_layout = QVBoxLayout(action_group)
+
+        self.detect_btn = QPushButton("Yeniden Tara")
+        self.detect_btn.setObjectName("detectBtn")
+        self.detect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detect_btn.clicked.connect(self.detect_gpu)
+        action_layout.addWidget(self.detect_btn)
+
+        self.install_btn = QPushButton("Secili Surucuyu Kur")
+        self.install_btn.setObjectName("installBtn")
+        self.install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.install_btn.clicked.connect(self.install_selected)
+        action_layout.addWidget(self.install_btn)
+
+        self.remove_btn = QPushButton("Secili Surucuyu Kaldir")
+        self.remove_btn.setObjectName("removeBtn")
+        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_btn.clicked.connect(self.remove_selected)
+        action_layout.addWidget(self.remove_btn)
+
+        action_layout.addSpacing(6)
+
+        self.reboot_btn = QPushButton("Sistemi Yeniden Baslat")
+        self.reboot_btn.setObjectName("rebootBtn")
+        self.reboot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reboot_btn.clicked.connect(self.reboot_system)
+        self.reboot_btn.setVisible(False)
+        action_layout.addWidget(self.reboot_btn)
+
+        action_layout.addStretch()
+
+        top_row.addWidget(action_group, 1)
+        content_layout.addLayout(top_row)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        content_layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self.status_label.setVisible(False)
+        content_layout.addWidget(self.status_label)
+
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+
+        self.driver_table = DriverTableWidget()
+        self.tabs.addTab(self.driver_table, "Suruculer")
+
+        self.log_widget = LogWidget()
+        self.tabs.addTab(self.log_widget, "Log")
+
+        content_layout.addWidget(self.tabs, 1)
+
+        bottom_bar = QHBoxLayout()
+        bottom_bar.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        bottom_bar.addWidget(self.summary_label)
+
+        bottom_bar.addStretch()
+
+        quit_btn = QPushButton("Kapat")
+        quit_btn.setFixedWidth(90)
+        quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        quit_btn.clicked.connect(self.close)
+        bottom_bar.addWidget(quit_btn)
+
+        content_layout.addLayout(bottom_bar)
+        main_layout.addWidget(content)
+
+        self.log_widget.append("Hiroki OS Surucu Yoneticisi baslatildi.", ACCENT)
+        self.log_widget.append("GPU taranıyor...", TEXT_SECONDARY)
+
+        QTimer.singleShot(200, self.detect_gpu)
+
+    def detect_gpu(self):
+        self.gpu_name, self.gpu_type = GPUInfo.detect_gpu()
+        self.gpu_display.set_gpu(self.gpu_name, self.gpu_type)
+
+        self.log_widget.append(f"GPU: {self.gpu_name}", TEXT_PRIMARY)
+        self.log_widget.append(f"Tur: {GPUInfo.get_gpu_type_label(self.gpu_type)}", ACCENT)
+
+        drivers = GPUInfo.DRIVER_MAP.get(self.gpu_type, [])
+        if not drivers:
+            self.log_widget.append("Bu GPU icin tanimli surucu bulunamadi.", ORANGE)
+            self.summary_label.setText("Surucu bulunamadi")
+            return
+
+        self.driver_table.populate(drivers)
+
+        installed = self.driver_table.get_installed_packages()
+        total = len(drivers)
+        self.summary_label.setText(
+            f"{total} surucu bulundu | {len(installed)} yuklu | {total - len(installed)} yuklu degil"
+        )
+
+        self.log_widget.append(
+            f"{len(drivers)} surucu listelendi, {len(installed)} tanesi yuklu.",
+            GREEN if installed else TEXT_SECONDARY
+        )
+
+    def install_selected(self):
+        packages = self.driver_table.get_selected_packages()
+        if not packages:
+            QMessageBox.information(
+                self, "Bilgi",
+                "Lutfen kurmak istediginiz surucuyu tablodan secin.\n"
+                "Birden fazla surucu secmek icin Ctrl tusuna basili tutarak tiklayabilirsiniz."
+            )
+            return
+
+        missing = []
+        for pkg in packages:
+            if not GPUInfo.is_package_installed(pkg):
+                missing.append(pkg)
+
+        if not missing:
+            QMessageBox.information(
+                self, "Bilgi",
+                "Secili suruculer zaten yuklu."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "Onay",
+            f"Asagidaki paketler kurulacak:\n\n"
+            f"  {chr(10).join('  - ' + p for p in missing)}\n\n"
+            f"Devam etmek istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.run_operation(missing, "install")
+
+    def remove_selected(self):
+        packages = self.driver_table.get_selected_packages()
+        if not packages:
+            QMessageBox.information(
+                self, "Bilgi",
+                "Lutfen kaldirilacak surucuyu tablodan secin."
+            )
+            return
+
+        installed = [p for p in packages if GPUInfo.is_package_installed(p)]
+        if not installed:
+            QMessageBox.information(
+                self, "Bilgi",
+                "Secili suruculer zaten yuklu degil."
+            )
+            return
+
+        reply = QMessageBox.warning(
+            self, "Dikkat",
+            f"Asagidaki paketler kaldirilacak:\n\n"
+            f"  {chr(10).join('  - ' + p for p in installed)}\n\n"
+            f"Kaldirma islemi sistemi bozabilir!\n"
+            f"Devam etmek istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.run_operation(installed, "remove")
+
+    def run_operation(self, packages, action):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.warning(self, "Uyari", "Bir islem zaten devam ediyor.")
+            return
+
+        self.install_btn.setEnabled(False)
+        self.remove_btn.setEnabled(False)
+        self.detect_btn.setEnabled(False)
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.status_label.setVisible(True)
+        self.status_label.setText("Islem baslatiliyor...")
+
+        action_label = "kuruluyor" if action == "install" else "kaldiriliyor"
+        self.log_widget.append(
+            f"Islem baslatiliyor: {', '.join(packages)} {action_label}",
+            ORANGE if action == "remove" else BLUE
+        )
+
+        self.worker = WorkerThread(packages, action)
+        self.worker.progress.connect(self.on_progress)
+        self.worker.finished.connect(self.on_finished)
+        self.worker.start()
+
+    def on_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.status_label.setText(message)
+        if message:
+            self.log_widget.append(f"  {message}", TEXT_SECONDARY)
+
+    def on_finished(self, success, message):
+        self.install_btn.setEnabled(True)
+        self.remove_btn.setEnabled(True)
+        self.detect_btn.setEnabled(True)
+
+        if success:
+            self.progress_bar.setValue(100)
+            self.status_label.setText("Islem basariyla tamamlandi!")
+            self.log_widget.append("Islem basariyla tamamlandi.", GREEN)
+            self.needs_reboot = True
+            self.reboot_btn.setVisible(True)
+
+            QMessageBox.information(
+                self, "Basarili",
+                "Surucu islemi basariyla tamamlandi!\n\n"
+                "Degisikliklerin tam olarak uygulanmasi icin\n"
+                "sistemi yeniden baslatmaniz onerilir."
+            )
+
+            self.detect_gpu()
+        else:
+            self.status_label.setText("Islem basarisiz!")
+            self.log_widget.append(f"HATA: {message}", RED)
+
+            QMessageBox.critical(
+                self, "Hata",
+                f"Islem basarisiz oldu:\n\n{message[:500]}"
+            )
+
+        QTimer.singleShot(3000, self.reset_progress)
+
+    def reset_progress(self):
+        self.progress_bar.setVisible(False)
+        self.status_label.setVisible(False)
+
+    def reboot_system(self):
+        reply = QMessageBox.question(
+            self, "Yeniden Baslatma",
+            "Sistem yeniden baslatilacak.\n"
+            "Tum kaydedilmemis islemler kaybolacaktir.\n\n"
+            "Devam etmek istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.log_widget.append("Sistem yeniden baslatiliyor...", ORANGE)
+            try:
+                subprocess.run(["systemctl", "reboot"], timeout=5)
+            except Exception:
+                try:
+                    subprocess.run(["reboot"], timeout=5)
+                except Exception as e:
+                    QMessageBox.critical(
+                        self, "Hata",
+                        f"Yeniden baslatma basarisiz: {str(e)}\n"
+                        f"Lutfen terminalden 'reboot' komutunu calistirin."
+                    )
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLESHEET)
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#141414"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

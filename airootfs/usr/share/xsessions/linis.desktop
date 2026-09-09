@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Linis
+Comment=Tokyo Night tarzı X11 window manager
+Exec=linis-session
+Type=Application
+X-LightDM-Session-Type=x11

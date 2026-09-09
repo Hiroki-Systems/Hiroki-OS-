@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Hiroki OS Kur
+Name[tr]=Hiroki OS Kur
+GenericName=System Installer
+Comment=Hiroki OS kurulumunu başlat
+Exec=/usr/bin/hiroki-installer-launch
+Icon=hiroki-installer
+Terminal=false
+Type=Application
+Categories=System;
+StartupNotify=true

@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Hiroki OS - Masaüstü Ortamı (DE) Seçici (GTK3).
+
+/etc/hiroki/selected-de dosyasına seçilen masaüstünü yazar. Sistem dosyasına
+yazmak için gerekirse pkexec kullanılır; kullanıcı yazamıyorsa günlük kullanıcı
+ayarına (~/.config/hiroki-selected-de) yazılır. hiroki-dm bu iki kaynağı da okur.
+"""
+import gi
+import os
+import shutil
+import subprocess
+import sys
+
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
+
+DES = [
+    ("xfce", "XFCE"),
+    ("kde", "KDE Plasma"),
+    ("gnome", "GNOME"),
+    ("cinnamon", "Cinnamon"),
+    ("mate", "MATE"),
+    ("budgie", "Budgie"),
+    ("lxqt", "LXQt"),
+    ("i3wm", "i3wm"),
+    ("openbox", "Openbox"),
+    ("hyprland", "Hyprland"),
+]
+
+SYS_FILE = "/etc/hiroki/selected-de"
+USER_FILE = os.path.expanduser("~/.config/hiroki-selected-de")
+DEFAULT_DE = "xfce"
+
+
+def get_current():
+    for path in (SYS_FILE, USER_FILE):
+        try:
+            with open(path) as fh:
+                de = fh.read().strip()
+            if de:
+                return de
+        except Exception:
+            pass
+    return DEFAULT_DE
+
+
+class HirokiDeChooser(Gtk.Dialog):
+    def __init__(self):
+        super().__init__(
+            title="Hiroki — Masaüstü Ortamı Seçici",
+            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                     Gtk.STOCK_OK, Gtk.ResponseType.OK),
+        )
+        self.set_default_size(380, 300)
+        self.set_position(Gtk.WindowPosition.CENTER)
+
+        box = self.get_content_area()
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        box.set_spacing(8)
+
+        lbl = Gtk.Label()
+        lbl.set_markup("<b>Oturumu başlatmadan önce masaüstü ortamını seçin:</b>")
+        lbl.set_halign(Gtk.Align.START)
+        box.pack_start(lbl, False, False, 0)
+
+        self.combo = Gtk.ComboBoxText()
+        for key, name in DES:
+            self.combo.append(key, name)
+        cur = get_current()
+        ids = [k for k, _ in DES]
+        self.combo.set_active_id(cur if cur in ids else DEFAULT_DE)
+        box.pack_start(self.combo, False, False, 0)
+
+        hint = Gtk.Label()
+        hint.set_markup(
+            '<span color="#A0A0B8">Seçim /etc/hiroki/selected-de dosyasına '
+            "(pkexec ile) veya kullanıcı ayarına kaydedilir.</span>"
+        )
+        hint.set_line_wrap(True)
+        hint.set_halign(Gtk.Align.START)
+        box.pack_start(hint, False, False, 0)
+
+        self.show_all()
+
+    def selected(self):
+        return self.combo.get_active_id()
+
+
+def save_selection(de):
+    # Önce sistem dosyasına yazmayı dene, olmazsa kullanıcı ayarına yaz.
+    try:
+        os.makedirs(os.path.dirname(SYS_FILE), exist_ok=True)
+        with open(SYS_FILE, "w") as fh:
+            fh.write(de + "\n")
+        return SYS_FILE
+    except Exception:
+        pass
+    try:
+        os.makedirs(os.path.dirname(USER_FILE), exist_ok=True)
+        with open(USER_FILE, "w") as fh:
+            fh.write(de + "\n")
+        return USER_FILE
+    except Exception:
+        return None
+
+
+def main():
+    chooser = HirokiDeChooser()
+    if chooser.run() != Gtk.ResponseType.OK:
+        chooser.destroy()
+        return 0
+    de = chooser.selected() or DEFAULT_DE
+    chooser.destroy()
+
+    target = save_selection(de)
+    if target:
+        print("Seçim kaydedildi:", de, "->", target)
+    else:
+        print("Uyarı: seçim kaydedilemedi.")
+
+    # Oturumu başlat (gerekiyorsa sudo ile)
+    launcher = ["/usr/bin/hiroki-dm-wrapper"]
+    if os.geteuid() != 0 and shutil.which("sudo"):
+        launcher = ["sudo", "-E", "/usr/bin/hiroki-dm-wrapper"]
+    try:
+        subprocess.Popen(launcher)
+    except Exception as exc:
+        print("Oturum başlatılamadı:", exc)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

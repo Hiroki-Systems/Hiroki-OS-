@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Duvar Kagitlari
+Name[tr]=Hiroki Duvar Kagitlari
+Comment=Duvar kagidi secme ve uygulama
+Comment[tr]=Duvar kagidi secme ve uygulama
+Exec=hiroki-wallpaper
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

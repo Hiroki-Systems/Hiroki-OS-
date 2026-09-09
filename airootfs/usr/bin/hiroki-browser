@@ -1,0 +1,3 @@
+#!/bin/bash
+# Hiroki Browser - Başlatıcı
+exec python3 /usr/share/hiroki-browser/hiroki-browser.py "$@"

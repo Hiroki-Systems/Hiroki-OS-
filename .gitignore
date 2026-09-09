@@ -1,0 +1,25 @@
+# Build ciktilari
+out/
+
+# Pacman cache (ana dizin)
+.iso-build/pacman-cache/
+
+# Hiroki cache (airootfs icindeki)
+airootfs/usr/share/hiroki/cache/
+airootfs/var/cache/
+
+# Kopyalanan uygulamalar
+hiroki-apps/
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Gecici dosyalar
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Yedekleme
+Name[tr]=Hiroki Yedekleme
+Comment=Sistem yedekleme ve geri yukleme
+Comment[tr]=Sistem yedekleme ve geri yukleme
+Exec=hiroki-backup
+Icon=drive-harddisk
+Terminal=false
+Categories=System;
+StartupNotify=true

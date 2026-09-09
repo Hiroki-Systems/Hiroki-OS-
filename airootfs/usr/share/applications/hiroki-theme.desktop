@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Tema Yoneticisi
+Name[tr]=Hiroki Tema Yoneticisi
+Comment=Plasma tema, renk, ikon ve cursor yonetimi
+Comment[tr]=Plasma tema, renk, ikon ve cursor yonetimi
+Exec=hiroki-theme
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

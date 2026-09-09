@@ -1,0 +1,56 @@
+{
+  "tiers": {
+    "minimal": {
+      "ram": "<=512 MB",
+      "primary": ["i3wm", "openbox"],
+      "secondary": ["lxqt"],
+      "message": "Donanımınız çok sınırlı, pencere yöneticisi kullanmanız önerilir",
+      "color": "#E91E8C",
+      "icon": "⚠️"
+    },
+    "light": {
+      "ram": "512 MB - 2 GB",
+      "primary": ["lxqt"],
+      "secondary": ["xfce"],
+      "message": "Donanımınız hafif bir masaüstü ortamı için uygun",
+      "color": "#00D4AA",
+      "icon": "🍃"
+    },
+    "medium": {
+      "ram": "2 GB - 4 GB",
+      "primary": ["xfce"],
+      "secondary": ["lxqt", "mate"],
+      "message": "Donanımınız orta seviye masaüstü ortamları için uygun",
+      "color": "#2D1B69",
+      "icon": "⚖️"
+    },
+    "full": {
+      "ram": "4 GB - 8 GB",
+      "primary": ["kde"],
+      "secondary": ["xfce", "gnome", "cinnamon", "budgie"],
+      "message": "Donanımınız tam özellikli masaüstü ortamları için uygun",
+      "color": "#E91E8C",
+      "icon": "🚀"
+    },
+    "high": {
+      "ram": "8 GB+",
+      "primary": ["kde", "gnome"],
+      "secondary": ["xfce", "cinnamon", "mate", "budgie", "lxqt", "i3wm", "openbox", "hyprland"],
+      "message": "Donanımınız tüm masaüstü ortamlarını rahatça çalıştırabilir",
+      "color": "#00D4AA",
+      "icon": "💎"
+    }
+  },
+  "desktops": {
+    "xfce": { "name": "XFCE", "ram_min": 1024, "type": "desktop", "display_manager": "lightdm", "wayland": false },
+    "kde": { "name": "KDE Plasma", "ram_min": 4096, "type": "desktop", "display_manager": "sddm", "wayland": true },
+    "gnome": { "name": "GNOME", "ram_min": 4096, "type": "desktop", "display_manager": "gdm", "wayland": true },
+    "cinnamon": { "name": "Cinnamon", "ram_min": 2048, "type": "desktop", "display_manager": "lightdm", "wayland": false },
+    "mate": { "name": "MATE", "ram_min": 1024, "type": "desktop", "display_manager": "lightdm", "wayland": false },
+    "budgie": { "name": "Budgie", "ram_min": 2048, "type": "desktop", "display_manager": "lightdm", "wayland": false },
+    "lxqt": { "name": "LXQt", "ram_min": 512, "type": "desktop", "display_manager": "lightdm", "wayland": false },
+    "i3wm": { "name": "i3wm", "ram_min": 256, "type": "wm", "display_manager": "lightdm", "wayland": false },
+    "openbox": { "name": "Openbox", "ram_min": 256, "type": "wm", "display_manager": "lightdm", "wayland": false },
+    "hyprland": { "name": "Hyprland", "ram_min": 4096, "type": "wm", "display_manager": "sddm", "wayland": true }
+  }
+}

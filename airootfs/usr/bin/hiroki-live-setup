@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Hiroki OS - Live Setup
+# Live oturumda otomatik çalışır: donanım algıla, welcome aç, ağ hazırla
+set -e
+
+# Sadece live ortamda çalış
+if [[ ! -e /run/archiso/bootmnt && ! -e /run/miso/bootmnt ]]; then
+    # Yine de /tmp flag varsa devam et (test için)
+    if [[ ! -f /tmp/hiroki-live-mode ]]; then
+        exit 0
+    fi
+fi
+
+# Live kullanıcı adı (customize_airootfs.sh'te oluşturulur, sudoers/polkit ile uyumlu)
+LIVE_USER="live"
+
+# Donanım algıla
+/usr/bin/hiroki-hw-detect >/tmp/hiroki-hw-info.json 2>&1 || true
+touch /tmp/hiroki-live-mode
+
+# Ağ: NetworkManager zaten aktif, ama bluetooth'u da başlat
+systemctl start NetworkManager 2>/dev/null || true
+systemctl start bluetooth 2>/dev/null || true
+
+# Ses (kullanıcı servisleri)
+systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+
+# Live kullanıcısı için otomatik welcome (gecikmeli)
+if id "$LIVE_USER" >/dev/null 2>&1; then
+    (
+        sleep 3
+        DISPLAY=:0 sudo -u "$LIVE_USER" hiroki-welcome 2>/dev/null || true
+    ) &
+fi
+
+exit 0

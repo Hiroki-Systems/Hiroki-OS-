@@ -1,0 +1,29 @@
+#!/bin/bash
+# Openbox autostart — Tokyo Night rice
+
+# Cursor
+export XCURSOR_THEME=Adwaita
+export XCURSOR_SIZE=24
+printf "Xcursor.theme: Adwaita\nXcursor.size: 24\n" | xrdb -merge 2>/dev/null || true
+
+# glycin SVG crash engelle
+export GDK_DISABLE_SANDBOXED_LOADER=1
+
+# Compositor — blur, shadow, animation
+picom --config /etc/picom.conf --daemon 2>/dev/null || picom --daemon 2>/dev/null &
+
+# Panel — Tokyo Night tint2
+tint2 -c ~/.config/tint2/tint2rc &
+
+# Wallpaper
+feh --no-fehbg --bg-fill /usr/share/hiroki/wallpapers/sakura-gradient.jpg &
+
+# Launcher
+# rofi -show drun -show-icons &
+
+# System tray apps
+nm-applet &
+volumeicon &
+
+# Notifications
+dunst &

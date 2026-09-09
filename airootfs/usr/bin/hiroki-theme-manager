@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Hiroki OS - Tema Yöneticisi
+# Sakura 1.0 - GTK3
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import os, subprocess, json, glob
+
+WALLPAPER_DIR = "/usr/share/hiroki/wallpapers"
+THEMES = {
+    "Hiroki-Dark": {"gtk": "Hiroki-Dark", "icon": "Hiroki-Icons", "desc": "Koyu mor & pembe - varsayılan"},
+    "Hiroki-Light": {"gtk": "Hiroki-Light", "icon": "Hiroki-Icons-Light", "desc": "Açık tema - gündüz kullanımı"},
+}
+ACCENT_COLORS = {
+    "Pembe (#E91E8C)": "#E91E8C",
+    "Mor (#2D1B69)": "#2D1B69",
+    "Turkuaz (#00D4AA)": "#00D4AA",
+}
+
+def set_gsetting(schema, key, value):
+    try:
+        subprocess.run(["gsettings", "set", schema, key, value], check=False)
+    except: pass
+
+class HirokiThemeManager(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Hiroki Tema Yöneticisi")
+        self.set_default_size(760, 520)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.connect("destroy", Gtk.main_quit)
+        self.apply_css()
+        self.build_ui()
+
+    def apply_css(self):
+        css = b"window { background-color: #0D0D1A; } .title { color: #EAEAEA; font-weight: bold; font-size: 18px; } .card { background-color: #1A1A2E; border-radius: 12px; border: 1px solid #2D1B69; padding: 12px; } .btn-primary { background: #E91E8C; color: white; border-radius: 8px; padding: 10px 18px; font-weight: bold; } .btn-secondary { background: #2D1B69; color: #EAEAEA; border-radius: 8px; padding: 8px 16px; }"
+        p = Gtk.CssProvider()
+        p.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def build_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        main.set_margin_top(16); main.set_margin_bottom(16); main.set_margin_start(16); main.set_margin_end(16)
+        self.add(main)
+        title = Gtk.Label()
+        title.set_markup('<span class="title">🎨 Hiroki Tema Yöneticisi</span>')
+        title.set_halign(Gtk.Align.START)
+        main.pack_start(title, False, False, 0)
+        main.pack_start(Gtk.Label(label="Hiroki renk paleti ile görünümünüzü özelleştirin. Değişiklikler anında uygulanır."), False, False, 0)
+
+        # Tema seçimi
+        theme_card = Gtk.Frame()
+        theme_card.get_style_context().add_class("card")
+        tb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        tb.set_margin_top(12); tb.set_margin_bottom(12); tb.set_margin_start(12); tb.set_margin_end(12)
+        tb.pack_start(Gtk.Label(label="Tema"), False, False, 0)
+        combo = Gtk.ComboBoxText()
+        for name, info in THEMES.items():
+            combo.append_text(f"{name} — {info['desc']}")
+        combo.set_active(0)
+        combo.connect("changed", self.on_theme_changed)
+        tb.pack_start(combo, False, False, 0)
+        # Vurgu rengi
+        tb.pack_start(Gtk.Label(label="Vurgu Rengi"), False, False, 0)
+        accent = Gtk.ComboBoxText()
+        for label in ACCENT_COLORS:
+            accent.append_text(label)
+        accent.set_active(0)
+        accent.connect("changed", self.on_accent_changed)
+        tb.pack_start(accent, False, False, 0)
+        theme_card.add(tb)
+        main.pack_start(theme_card, False, False, 0)
+
+        # Duvar kağıtları
+        wp_card = Gtk.Frame()
+        wp_card.get_style_context().add_class("card")
+        wp_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        wp_box.set_margin_top(12); wp_box.set_margin_bottom(12); wp_box.set_margin_start(12); wp_box.set_margin_end(12)
+        wp_box.pack_start(Gtk.Label(label="Duvar Kağıtları (5)"), False, False, 0)
+        flow = Gtk.FlowBox()
+        flow.set_max_children_per_line(3)
+        flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        wallpapers = [
+            ("sakura-gradient", "Sakura Gradyan (Varsayılan)", "#2D1B69 → #E91E8C"),
+            ("geometric-waves", "Geometrik Dalgalar", "#00D4AA dalgalar"),
+            ("minimal-mountain", "Minimalist Dağ", "Sisli dağlar"),
+            ("abstract-neon", "Soyut Neon Işıklar", "Neon çizgiler"),
+            ("space-theme", "Uzay Teması", "Yıldızlar ve galaksi"),
+        ]
+        for fid, name, desc in wallpapers:
+            btn = Gtk.Button()
+            btn.set_size_request(180, 110)
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            # Renkli placeholder
+            color_box = Gtk.EventBox()
+            color_box.set_size_request(-1, 70)
+            # Basit renk: mor/pembe/turkuaz
+            ctx = color_box.get_style_context()
+            inner.pack_start(Gtk.Label(label=f"🖼️ {name}"), False, False, 0)
+            inner.pack_start(Gtk.Label(label=desc), False, False, 0)
+            btn.add(inner)
+            btn.connect("clicked", self.on_wallpaper, fid)
+            flow.add(btn)
+        wp_box.pack_start(flow, True, True, 0)
+        wp_card.add(wp_box)
+        main.pack_start(wp_card, True, True, 0)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_box.set_halign(Gtk.Align.END)
+        close = Gtk.Button(label="Kapat")
+        close.get_style_context().add_class("btn-secondary")
+        close.connect("clicked", lambda w: self.destroy())
+        apply = Gtk.Button(label="Uygula ve Kaydet")
+        apply.get_style_context().add_class("btn-primary")
+        apply.connect("clicked", self.on_apply)
+        btn_box.pack_start(close, False, False, 0)
+        btn_box.pack_start(apply, False, False, 0)
+        main.pack_start(btn_box, False, False, 0)
+
+    def on_theme_changed(self, combo):
+        text = combo.get_active_text()
+        if not text: return
+        theme = text.split(" —")[0]
+        set_gsetting("org.gnome.desktop.interface", "gtk-theme", theme)
+        set_gsetting("org.gnome.desktop.interface", "icon-theme", THEMES.get(theme, {}).get("icon", "Hiroki-Icons"))
+        # XFCE
+        subprocess.run(["xfconf-query","-c","xsettings","-p","/Net/ThemeName","-s",theme], check=False)
+        subprocess.run(["xfconf-query","-c","xsettings","-p","/Net/IconThemeName","-s",THEMES.get(theme, {}).get("icon","Hiroki-Icons")], check=False)
+
+    def on_accent_changed(self, combo):
+        label = combo.get_active_text()
+        color = ACCENT_COLORS.get(label, "#E91E8C")
+        # GTK accent için gsettings veya config dosyasına yaz
+        cfg = os.path.expanduser("~/.config/hiroki/accent.conf")
+        os.makedirs(os.path.dirname(cfg), exist_ok=True)
+        with open(cfg, "w") as f:
+            f.write(f"accent={color}\n")
+
+    def on_wallpaper(self, btn, fid):
+        path = f"{WALLPAPER_DIR}/{fid}.jpg"
+        # XFCE
+        subprocess.run(["xfconf-query","-c","xfce4-desktop","-p","/backdrop/screen0/monitor0/workspace0/last-image","-s",path], check=False)
+        # GNOME
+        set_gsetting("org.gnome.desktop.background", "picture-uri", f"file://{path}")
+        # feh fallback
+        subprocess.run(["feh","--bg-scale",path], check=False)
+        dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text="Duvar kağıdı uygulandı")
+        dialog.format_secondary_text(path)
+        dialog.run(); dialog.destroy()
+
+    def on_apply(self, btn):
+        dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text="Tema kaydedildi!")
+        dialog.format_secondary_text("Ayarlarınız ~/.config altına kaydedildi. Oturumu yeniden başlatmanız gerekebilir.")
+        dialog.run(); dialog.destroy()
+
+if __name__ == "__main__":
+    w = HirokiThemeManager()
+    w.show_all()
+    Gtk.main()

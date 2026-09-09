@@ -1,0 +1,26 @@
+#!/bin/bash
+# Hiroki OS - KDE ilk kurulum ayarlari
+# Sadece bir kez calisir
+
+SETUP_DONE="$HOME/.hiroki-kde-setup-done"
+[ -f "$SETUP_DONE" ] && exit 0
+
+# Duvar kagidi
+if [ -f /usr/share/wallpapers/space-theme.jpg ]; then
+  qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+    var allDesktops = desktops();
+    for (var i=0; i<allDesktops.length; i++) {
+      allDesktops[i].wallpaperPlugin = 'org.kde.image';
+      allDesktops[i].currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+      allDesktops[i].writeConfig('Image', 'file:///usr/share/wallpapers/space-theme.jpg');
+    }
+  " 2>/dev/null
+fi
+
+# Plasma tema
+plasma-apply-desktoptheme breeze-dark 2>/dev/null
+
+# Renk semasi
+plasma-apply-color-scheme BreezeDark 2>/dev/null
+
+touch "$SETUP_DONE"

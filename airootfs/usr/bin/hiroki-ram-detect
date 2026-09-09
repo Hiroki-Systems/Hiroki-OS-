@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Hiroki OS - RAM algılama ile DE ön-seçimi
+# Calamares açılmadan önce çalışır, /tmp/hiroki-selected-de'yi ayarlar
+set -euo pipefail
+
+RAM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+RAM_GB=$((RAM_KB / 1048576))
+
+if [[ $RAM_GB -le 1 ]]; then
+    SELECTED_DE="openbox"
+elif [[ $RAM_GB -le 3 ]]; then
+    SELECTED_DE="xfce"
+elif [[ $RAM_GB -le 7 ]]; then
+    SELECTED_DE="xfce"
+else
+    SELECTED_DE="xfce"
+fi
+
+mkdir -p /tmp
+echo "$SELECTED_DE" > /tmp/hiroki-selected-de

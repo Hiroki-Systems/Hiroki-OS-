@@ -1,0 +1,13 @@
+[Unit]
+Description=Hiroki OS Live Oturum Hazırlığı
+After=network.target display-manager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/hiroki-live-setup
+RemainAfterExit=yes
+StandardOutput=journal
+
+[Install]
+WantedBy=graphical.target

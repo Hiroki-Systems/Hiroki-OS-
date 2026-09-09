@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hiroki Sistem Ayarlari
+Name[tr]=Hiroki Sistem Ayarlari
+Comment=Sistem ayarlari ve yapilandirma
+Comment[tr]=Sistem ayarlari ve yapilandirma
+Exec=hiroki-tweaks
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

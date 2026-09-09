@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Hiroki
+Description=Hiroki OS Sakura Plymouth teması - sakura yükleme animasyonu
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/hiroki
+ScriptFile=/usr/share/plymouth/themes/hiroki/hiroki.script

@@ -1,0 +1,813 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Hiroki OS - Tema Yoneticisi
+KDE Plasma Theme Manager
+"""
+
+import os
+import sys
+import subprocess
+import glob
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QListWidget, QListWidgetItem, QPushButton, QFrame,
+    QSplitter, QMessageBox, QGroupBox, QScrollArea, QSizePolicy,
+    QAbstractItemView
+)
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
+
+
+# === Sabit Degerler ===
+VERSION = "1.0.0"
+BG_COLOR = "#111111"
+BG_SECONDARY = "#1a1a1a"
+BG_TERTIARY = "#222222"
+ACCENT_COLOR = "#d34188"
+ACCENT_HOVER = "#e5539a"
+TEXT_PRIMARY = "#ffffff"
+TEXT_SECONDARY = "#aaaaaa"
+BORDER_COLOR = "#333333"
+
+KDE_USER_DIRS = {
+    "Plasma": ["~/.local/share/plasma/desktoptheme/"],
+    "Renk": ["~/.local/share/color-schemes/"],
+    "Icon": ["~/.local/share/icons/"],
+    "Cursor": ["~/.local/share/icons/", "~/.local/share/cursors/"],
+    "Font": ["~/.local/share/fonts/", "~/.local/share/fonts/truetype/"],
+}
+
+KDE_SYSTEM_DIRS = {
+    "Plasma": ["/usr/share/plasma/desktoptheme/"],
+    "Renk": ["/usr/share/color-schemes/"],
+    "Icon": ["/usr/share/icons/"],
+    "Cursor": ["/usr/share/icons/", "/usr/share/cursors/"],
+    "Font": ["/usr/share/fonts/"],
+}
+
+
+def expand_path(path):
+    return os.path.expanduser(path)
+
+
+def list_directories(path):
+    """Dizin icerigini listele (sadece dizinler)."""
+    expanded = expand_path(path)
+    if not os.path.isdir(expanded):
+        return []
+    try:
+        entries = []
+        for name in sorted(os.listdir(expanded)):
+            full = os.path.join(expanded, name)
+            if os.path.isdir(full):
+                entries.append(name)
+        return entries
+    except PermissionError:
+        return []
+
+
+def list_files_with_ext(path, extensions):
+    """Dizin icerisindeki belirli uzantili dosyalari listele."""
+    expanded = expand_path(path)
+    if not os.path.isdir(expanded):
+        return []
+    try:
+        entries = []
+        for name in sorted(os.listdir(expanded)):
+            if any(name.endswith(ext) for ext in extensions):
+                stem = os.path.splitext(name)[0]
+                entries.append(stem)
+        return entries
+    except PermissionError:
+        return []
+
+
+def list_font_files(path):
+    """Font dosyalarini listele."""
+    extensions = (".ttf", ".otf", ".woff", ".woff2", ".fon")
+    return list_files_with_ext(path, extensions)
+
+
+def get_current_plasma_theme():
+    """Mevcut Plasma temasini al."""
+    try:
+        result = subprocess.run(
+            ["plasma-apply-desktoptheme", "--list"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("*"):
+                return line.replace("*", "").strip()
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["kf5-config", "--globals"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if "Theme=" in line:
+                return line.split("Theme=", 1)[-1].strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_current_color_scheme():
+    """Mevcut renk semasini al."""
+    try:
+        result = subprocess.run(
+            ["plasma-apply-color-scheme", "--list"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("*"):
+                return line.replace("*", "").strip()
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["kf5-config", "--globals"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if "ColorScheme=" in line:
+                return line.split("ColorScheme=", 1)[-1].strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_current_look_and_feel():
+    """Mevcut Look and Feel temasini al."""
+    try:
+        result = subprocess.run(
+            ["plasma-apply-lookandfeel", "--list"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("*"):
+                return line.replace("*", "").strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_current_icon_theme():
+    """Mevcut ikon temasini al."""
+    try:
+        result = subprocess.run(
+            ["kf5-config", "--globals"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if "Icons=" in line:
+                return line.split("Icons=", 1)[-1].strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_current_cursor_theme():
+    """Mevcut cursor temasini al."""
+    try:
+        result = subprocess.run(
+            ["kf5-config", "--globals"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if "CursorTheme=" in line:
+                return line.split("CursorTheme=", 1)[-1].strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_current_font():
+    """Mevcut fontu al."""
+    try:
+        result = subprocess.run(
+            ["kf5-config", "--globals"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if "Font=" in line:
+                return line.split("Font=", 1)[-1].strip()
+    except Exception:
+        pass
+    return "Bilinmiyor"
+
+
+def get_installed_themes(category):
+    """Belirli kategoride yuklu temalari topla."""
+    themes = set()
+
+    for d in KDE_SYSTEM_DIRS.get(category, []):
+        for name in list_directories(d):
+            themes.add(name)
+
+    for d in KDE_USER_DIRS.get(category, []):
+        for name in list_directories(d):
+            themes.add(name)
+
+    return sorted(themes)
+
+
+def get_installed_fonts():
+    """Yuklu fontlari topla."""
+    fonts = set()
+
+    for d in KDE_SYSTEM_DIRS.get("Font", []):
+        for name in list_font_files(d):
+            fonts.add(name)
+
+    for d in KDE_USER_DIRS.get("Font", []):
+        for name in list_font_files(d):
+            fonts.add(name)
+
+    return sorted(fonts)
+
+
+def apply_theme(category, theme_name):
+    """Temayi uygula."""
+    try:
+        if category == "Plasma":
+            cmd = ["plasma-apply-desktoptheme", theme_name]
+        elif category == "Renk":
+            cmd = ["plasma-apply-color-scheme", theme_name]
+        elif category == "Icon":
+            cmd = ["plasma-apply-color-scheme", theme_name]
+            cmd = ["kf5-config", "--globals", "--type", "icons", theme_name]
+        elif category == "Cursor":
+            cmd = ["kf5-config", "--globals", "--type", "cursortheme", theme_name]
+        elif category == "Font":
+            cmd = ["kf5-config", "--globals", "--type", "font", theme_name]
+        else:
+            return False, "Desteklenmeyen kategori"
+
+        if category == "Icon":
+            cmd = ["qdbus", "org.kde.KWin", "/KWin", "reconfigure"]
+            subprocess.run(
+                ["plasma-apply-lookandfeel", "-a", theme_name],
+                capture_output=True, text=True, timeout=10
+            )
+            kglobalshortcutrc = os.path.expanduser("~/.config/kglobalshortcutsrc")
+            if not os.path.isfile(kglobalshortcutrc):
+                return True, "Ikon teması uygulandi"
+            return True, f"Ikon teması '{theme_name}' olarak ayarlandi"
+
+        if category == "Cursor":
+            subprocess.run(
+                ["xsetroot", "-cursor_name", theme_name.lower()],
+                capture_output=True, text=True, timeout=5
+            )
+            return True, f"Cursor teması '{theme_name}' olarak ayarlandi"
+
+        if category == "Font":
+            subprocess.run(
+                ["qdbus", "org.kde.plasmashell", "/PlasmaShell",
+                 "org.kde.PlasmaShell.evaluateScript",
+                 f"var allDesktops = desktops(); for (var i=0;i<allDesktops.length;i++) {{ allDesktops[i].currentConfigGroup = ['General']; allDesktops[i].writeConfig('font', '{theme_name}'); }}"],
+                capture_output=True, text=True, timeout=10
+            )
+            return True, f"Font '{theme_name}' olarak ayarlandi"
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            return True, f"'{theme_name}' basariyla uygulandi"
+        else:
+            return False, result.stderr.strip() or "Bilinmeyen hata"
+    except FileNotFoundError:
+        return False, f"Komut bulunamadi: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return False, "Islem zaman asimina ugradi"
+    except Exception as e:
+        return False, str(e)
+
+
+class ThemeListWidget(QListWidget):
+    """Liste widget'i - secili ogeleri vurgular."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {BG_TERTIARY};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 4px;
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 10px 12px;
+                border-radius: 4px;
+                margin: 1px 2px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {ACCENT_COLOR};
+                color: white;
+            }}
+            QListWidget::item:hover {{
+                background-color: #2a2a2a;
+            }}
+        """)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSpacing(2)
+
+
+class HirokiThemeManager(QMainWindow):
+    """Ana pencere sinifi."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Tema Yoneticisi")
+        self.setMinimumSize(750, 550)
+        self.resize(900, 600)
+
+        self.current_category = "Plasma"
+        self.theme_items = {}
+
+        self._apply_global_style()
+        self._build_ui()
+        self._load_categories()
+        self._select_category("Plasma")
+
+    def _apply_global_style(self):
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {BG_COLOR};
+            }}
+            QWidget {{
+                background-color: {BG_COLOR};
+                color: {TEXT_PRIMARY};
+                font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+                font-size: 13px;
+            }}
+            QFrame#sidebar {{
+                background-color: {BG_SECONDARY};
+                border-right: 1px solid {BORDER_COLOR};
+            }}
+            QLabel {{
+                background-color: transparent;
+            }}
+            QPushButton {{
+                background-color: {BG_TERTIARY};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px 18px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #2d2d2d;
+                border-color: {ACCENT_COLOR};
+            }}
+            QPushButton:pressed {{
+                background-color: {ACCENT_COLOR};
+                color: white;
+            }}
+            QGroupBox {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 18px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 14px;
+                top: 4px;
+                padding: 0 6px;
+                color: {ACCENT_COLOR};
+            }}
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            QScrollBar:vertical {{
+                background-color: {BG_SECONDARY};
+                width: 10px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: #444;
+                border-radius: 5px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {ACCENT_COLOR};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Sol Panel (Sidebar)
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(220)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        # Logo alani
+        header_widget = QWidget()
+        header_widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {BG_SECONDARY};
+                border-bottom: 1px solid {BORDER_COLOR};
+            }}
+        """)
+        header_layout = QVBoxLayout(header_widget)
+        header_layout.setContentsMargins(16, 16, 16, 14)
+        header_layout.setSpacing(4)
+
+        logo_label = QLabel("Hiroki Tema Yoneticisi")
+        logo_label.setStyleSheet(f"""
+            color: {ACCENT_COLOR};
+            font-size: 17px;
+            font-weight: bold;
+            padding: 0;
+        """)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(logo_label)
+
+        version_label = QLabel(f"v{VERSION}")
+        version_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 11px;
+            padding: 0;
+        """)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(version_label)
+
+        sidebar_layout.addWidget(header_widget)
+
+        # Kategori listesi
+        cat_label = QLabel("  KATEGORILER")
+        cat_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 11px;
+            font-weight: bold;
+            padding: 14px 10px 6px 10px;
+            letter-spacing: 1px;
+        """)
+        sidebar_layout.addWidget(cat_label)
+
+        self.category_list = QListWidget()
+        self.category_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: transparent;
+                color: {TEXT_PRIMARY};
+                border: none;
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 12px 16px;
+                border-radius: 0;
+                margin: 0;
+            }}
+            QListWidget::item:selected {{
+                background-color: rgba(211, 65, 136, 0.18);
+                color: {ACCENT_COLOR};
+                border-left: 3px solid {ACCENT_COLOR};
+            }}
+            QListWidget::item:hover {{
+                background-color: rgba(255, 255, 255, 0.04);
+            }}
+        """)
+        self.category_list.setSpacing(1)
+        self.category_list.currentRowChanged.connect(self._on_category_changed)
+        sidebar_layout.addWidget(self.category_list, 1)
+
+        sidebar_layout.addWidget(self._make_separator())
+
+        # Alt bilgi
+        info_widget = QWidget()
+        info_widget.setStyleSheet(f"background-color: {BG_SECONDARY};")
+        info_layout = QVBoxLayout(info_widget)
+        info_layout.setContentsMargins(16, 12, 16, 14)
+        info_label = QLabel("Hiroki OS Tema Yoneticisi")
+        info_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 10px;")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_layout.addWidget(info_label)
+        sidebar_layout.addWidget(info_widget)
+
+        main_layout.addWidget(sidebar)
+
+        # Sag Panel
+        right_panel = QWidget()
+        right_layout = right_panel
+        right_layout_obj = QVBoxLayout(right_panel)
+        right_layout_obj.setContentsMargins(20, 16, 20, 16)
+        right_layout_obj.setSpacing(12)
+
+        # Ust bilgi
+        self.info_frame = QFrame()
+        self.info_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+            }}
+        """)
+        info_inner = QVBoxLayout(self.info_frame)
+        info_inner.setContentsMargins(16, 14, 16, 14)
+
+        self.category_title = QLabel("")
+        self.category_title.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 18px;
+            font-weight: bold;
+        """)
+        info_inner.addWidget(self.category_title)
+
+        self.current_theme_label = QLabel("")
+        self.current_theme_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 12px;
+            margin-top: 4px;
+        """)
+        info_inner.addWidget(self.current_theme_label)
+
+        right_layout_obj.addWidget(self.info_frame)
+
+        # Tema listesi
+        theme_group = QGroupBox("Yuklu Temalar")
+        theme_inner = QVBoxLayout(theme_group)
+
+        self.theme_list = ThemeListWidget()
+        self.theme_list.currentItemChanged.connect(self._on_theme_selected)
+        theme_inner.addWidget(self.theme_list)
+
+        # Arama kutusu
+        self.search_label = QLabel("Ara:")
+        self.search_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        theme_inner.addWidget(self.search_label)
+
+        right_layout_obj.addWidget(theme_group, 1)
+
+        # Alt butonlar
+        btn_frame = QFrame()
+        btn_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+            }}
+        """)
+        btn_layout = QHBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(16, 12, 16, 12)
+        btn_layout.setSpacing(10)
+
+        self.refresh_btn = QPushButton("Yenile")
+        self.refresh_btn.setFixedHeight(38)
+        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_TERTIARY};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #2d2d2d;
+                border-color: #555;
+            }}
+        """)
+        self.refresh_btn.clicked.connect(self._refresh)
+        btn_layout.addWidget(self.refresh_btn)
+
+        btn_layout.addStretch()
+
+        self.apply_btn = QPushButton("Uygula")
+        self.apply_btn.setFixedHeight(38)
+        self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_COLOR};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 28px;
+                font-weight: bold;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_HOVER};
+            }}
+            QPushButton:pressed {{
+                background-color: #b8356f;
+            }}
+            QPushButton:disabled {{
+                background-color: #444;
+                color: #888;
+            }}
+        """)
+        self.apply_btn.clicked.connect(self._apply_selected_theme)
+        btn_layout.addWidget(self.apply_btn)
+
+        right_layout_obj.addWidget(btn_frame)
+
+        main_layout.addWidget(right_panel, 1)
+
+    def _make_separator(self):
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background-color: {BORDER_COLOR}; max-height: 1px;")
+        return sep
+
+    def _load_categories(self):
+        categories = [
+            ("Plasma", "🖥️"),
+            ("Renk", "🎨"),
+            ("Icon", "📁"),
+            ("Cursor", "🖱️"),
+            ("Font", "🔤"),
+        ]
+        self.category_list.clear()
+        for name, icon in categories:
+            item = QListWidgetItem(f"  {icon}  {name}")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.category_list.addItem(item)
+
+    def _on_category_changed(self, row):
+        if row < 0:
+            return
+        item = self.category_list.item(row)
+        if item:
+            cat = item.data(Qt.ItemDataRole.UserRole)
+            self._select_category(cat)
+
+    def _select_category(self, category):
+        self.current_category = category
+
+        # Baslik guncelle
+        cat_display = {
+            "Plasma": "Plasma Tema",
+            "Renk": "Renk Sema",
+            "Icon": "Ikon Tema",
+            "Cursor": "Cursor Tema",
+            "Font": "Font Secimi",
+        }
+        self.category_title.setText(cat_display.get(category, category))
+
+        # Mevcut temayi al
+        current = self._get_current_theme(category)
+        self.current_theme_label.setText(f"Mevcut: {current}")
+
+        # Temalari yukle
+        self.theme_list.clear()
+
+        # Varsayilan ekle
+        varsayilan = QListWidgetItem("⭐ Varsayilan")
+        varsayilan.setData(Qt.ItemDataRole.UserRole, "Varsayilan")
+        self.theme_list.addItem(varsayilan)
+
+        if category == "Font":
+            themes = get_installed_fonts()
+        else:
+            themes = get_installed_themes(category)
+
+        for theme in themes:
+            display = theme
+            if theme == current:
+                display = f"✅  {theme}  (aktif)"
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, theme)
+            self.theme_list.addItem(item)
+
+        # Mevcut temayi sec
+        for i in range(self.theme_list.count()):
+            item = self.theme_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == current:
+                self.theme_list.setCurrentItem(item)
+                break
+
+    def _get_current_theme(self, category):
+        if category == "Plasma":
+            return get_current_plasma_theme()
+        elif category == "Renk":
+            return get_current_color_scheme()
+        elif category == "Icon":
+            return get_current_icon_theme()
+        elif category == "Cursor":
+            return get_current_cursor_theme()
+        elif category == "Font":
+            return get_current_font()
+        return "Bilinmiyor"
+
+    def _on_theme_selected(self, current, previous):
+        if current:
+            theme_name = current.data(Qt.ItemDataRole.UserRole)
+            self.apply_btn.setEnabled(True)
+        else:
+            self.apply_btn.setEnabled(False)
+
+    def _apply_selected_theme(self):
+        item = self.theme_list.currentItem()
+        if not item:
+            return
+
+        theme_name = item.data(Qt.ItemDataRole.UserRole)
+        if not theme_name:
+            return
+
+        if theme_name == "Varsayilan":
+            reply = QMessageBox.question(
+                self,
+                "Onay",
+                f"{self.current_category} kategorisinde varsayilan temaya donmek istediginize emin misiniz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            # Varsayilan tema icin komut
+            defaults = {
+                "Plasma": "breeze",
+                "Renk": "Breeze",
+                "Icon": "breeze",
+                "Cursor": "breeze",
+                "Font": "Noto Sans",
+            }
+            theme_name = defaults.get(self.current_category, "breeze")
+
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setText("Uygulanıyor...")
+        QApplication.processEvents()
+
+        success, message = apply_theme(self.current_category, theme_name)
+
+        self.apply_btn.setText("Uygula")
+        self.apply_btn.setEnabled(True)
+
+        if success:
+            QMessageBox.information(
+                self,
+                "Basarili",
+                f"{message}\nDegisikliklerin tam gecerli olmasi icin oturumu yeniden baslatabilirsiniz.",
+                QMessageBox.StandardButton.Ok
+            )
+            self._select_category(self.current_category)
+        else:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Tema uygulanirken hata olustu:\n{message}",
+                QMessageBox.StandardButton.Ok
+            )
+
+    def _refresh(self):
+        self._select_category(self.current_category)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_COLOR))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_TERTIARY))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_SECONDARY))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_SECONDARY))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BG_TERTIARY))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT_COLOR))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT_COLOR))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_COLOR))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_PRIMARY))
+    app.setPalette(palette)
+
+    window = HirokiThemeManager()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

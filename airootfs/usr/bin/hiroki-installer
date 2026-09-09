@@ -1,0 +1,2174 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Hiroki OS Installer 2.0 — Arch Linux live ortamı, Python 3.10+, PyQt6.
+
+Import etmek, --help ve --check kurulum başlatmaz. Disk yazma işlemleri yalnızca
+GUI'deki ön kontrol + hedefe özel yazılı onaydan sonra yürütülür.
+Gerçek donanımda kullanmadan önce README_TR.md ve TEST_PLANI.md dosyalarını okuyun.
+"""
+from __future__ import annotations
+
+import argparse
+import codecs
+import contextlib
+import dataclasses
+import datetime as dt
+import fcntl
+import json
+import math
+import os
+import platform
+import queue
+import re
+import selectors
+import shlex
+import shutil
+import signal
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import uuid
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Optional
+
+VERSION = "2.0.0"
+MIB = 1024 ** 2
+GIB = 1024 ** 3
+MIN_ROOT = 32 * GIB
+MIN_RETAINED = 16 * GIB
+SAFE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+BIOS_TYPE = "21686148-6449-6e6f-744e-656564454649"
+LINUX_TYPE = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+ROOT_TYPES = {LINUX_TYPE, "4f68bce3-e8cd-4db1-96e7-fbcaf984b709"}
+FORBIDDEN_FS = {"crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member", "bcache", "BitLocker"}
+MODES = {
+    "wipe": "Diski tamamen sil ve kur",
+    "partition": "Biçimlendirilmiş bölüme kur (ext4)",
+}
+DES = {
+    "kde": {"name": "KDE Plasma", "ram": 4096, "desc": "Plasma masaüstü (ISO'da önceden indirildi)",
+            "packages": ("plasma-meta", "konsole", "dolphin", "kate", "ark", "sddm"), "dm": "sddm"},
+    "lxqt": {"name": "LXQt", "ram": 1024, "desc": "Hafif Qt masaüstü (hızlı kurulum)",
+             "packages": ("lxqt", "sddm", "xorg-server", "qt5-base", "qt5-svg"), "dm": "sddm"},
+}
+BASE_PACKAGES = (
+    "base", "linux", "linux-firmware", "linux-headers", "base-devel", "sudo",
+    "nano", "vim", "git", "networkmanager", "grub", "efibootmgr", "os-prober",
+    "dosfstools", "e2fsprogs", "mtools", "polkit", "bash-completion", "usbutils",
+    "pciutils", "noto-fonts", "noto-fonts-emoji", "zram-generator",
+    "chafa", "python-pillow", "webkit2gtk-4.1", "firefox",
+    "python-pyqt6", "hicolor-icon-theme", "sddm",
+)
+TOOLS_COMMON = (
+    "lsblk", "sfdisk", "blockdev", "udevadm", "findmnt", "mount", "umount",
+    "pacstrap", "arch-chroot", "genfstab", "pacman", "pacman-key", "blkid",
+    "mkfs.ext4", "e2fsck", "resize2fs", "dumpe2fs", "sync",
+)
+
+
+class InstallerError(RuntimeError):
+    pass
+
+
+class Cancelled(InstallerError):
+    pass
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    output: str
+
+
+class CommandError(InstallerError):
+    def __init__(self, argv: list[str], returncode: int, output: str):
+        self.argv = tuple(argv)
+        self.returncode = returncode
+        self.output = output
+        super().__init__(f"Komut başarısız (kod {returncode}): {shlex.join(argv)}\n{output[-6000:]}")
+
+
+def ram_mb() -> int:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def recommended_de(memory: int) -> str:
+    if memory and memory < 1900:
+        return "openbox"
+    if memory < 3900:
+        return "xfce"
+    return "kde"
+
+
+def human_size(value: int) -> str:
+    return f"{value / GIB:.1f} GiB" if value >= GIB else f"{value / MIB:.0f} MiB"
+
+
+def align_up(value: int, alignment: int) -> int:
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+def bool_value(value) -> bool:
+    return value in (True, 1, "1", "true")
+
+
+def device_path(value: str) -> str:
+    # Yalnız lsblk/sfdisk tarafından bildirilen düz, gerçek çekirdek aygıt yolları.
+    if not re.fullmatch(r"/dev/[A-Za-z0-9_.+\-]+", value):
+        raise InstallerError(f"Desteklenmeyen aygıt yolu: {value!r}")
+    return value
+
+
+def detect_boot() -> str:
+    return "uefi" if Path("/sys/firmware/efi").is_dir() else "bios"
+
+
+def secure_boot_enabled() -> bool:
+    p = Path("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c")
+    if not p.exists():
+        return False
+    data = p.read_bytes()
+    if len(data) < 5:
+        raise InstallerError("Secure Boot değişkeni okunamadı.")
+    return data[4] == 1
+
+
+class CommandRunner:
+    """Kabuksuz, süreç gruplu, süre/iptal denetimli komut çalıştırıcısı.
+
+    stdin ve parolalar komut satırına/günlüğe yazılmaz. Kritik disk komutları
+    interruptible=False, timeout=None ile çalışır; iptal bir sonraki sınırdadır.
+    """
+    def __init__(self, log: Callable[[str], None] = lambda _: None,
+                 cancel: Optional[threading.Event] = None):
+        self.log = log
+        self.cancel = cancel if cancel is not None else threading.Event()
+        self._secrets: list[str] = []
+
+    def add_secret(self, value: str):
+        if value and value not in self._secrets:
+            self._secrets.append(value)
+
+    def redact(self, text: str) -> str:
+        for secret in self._secrets:
+            text = text.replace(secret, "[PAROLA GİZLENDİ]")
+        return text
+
+    def check_cancel(self):
+        if self.cancel.is_set():
+            raise Cancelled("İptal istendi. Hedef disk otomatik olarak eski hâline döndürülmez.")
+
+    @staticmethod
+    def _terminate(proc: subprocess.Popen):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+    def run(self, argv, *, input_text: Optional[str] = None,
+            allowed=(0,), timeout: Optional[float] = 300,
+            interruptible: bool = True, ignore_cancel: bool = False,
+            stream: bool = False, quiet: bool = False) -> CommandResult:
+        if isinstance(argv, (str, bytes)) or not argv:
+            raise TypeError("Komut bir argüman listesi olmalıdır; shell metni kabul edilmez.")
+        argv = [os.fspath(x) for x in argv]
+        if any("\x00" in x for x in argv):
+            raise ValueError("Komutta NUL karakteri olamaz.")
+        if not ignore_cancel:
+            self.check_cancel()
+        if not quiet:
+            self.log(self.redact("$ " + shlex.join(argv)))
+        env = {"PATH": SAFE_PATH, "HOME": "/root", "LANG": "C", "LC_ALL": "C",
+               "TERM": "dumb", "SYSTEMD_COLORS": "0", "SYSTEMD_PAGER": ""}
+        # memfd: stdin verisi diskte bir script/parola dosyası olarak tutulmaz.
+        stdin_file = None
+        proc = None
+        sel = selectors.DefaultSelector()
+        chunks: deque[bytes] = deque()
+        size = 0
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""
+        try:
+            if input_text is not None:
+                if not hasattr(os, "memfd_create"):
+                    raise InstallerError("Bu Linux/Python sürümünde güvenli bellek stdin'i (memfd) yok.")
+                fd = os.memfd_create("hiroki-stdin", os.MFD_CLOEXEC)
+                stdin_file = os.fdopen(fd, "w+b")
+                stdin_file.write(input_text.encode("utf-8"))
+                stdin_file.seek(0)
+            proc = subprocess.Popen(
+                argv, stdin=stdin_file if stdin_file else subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                cwd="/", env=env, shell=False, start_new_session=True,
+            )
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            start = time.monotonic()
+            while sel.get_map():
+                if not ignore_cancel and interruptible and self.cancel.is_set():
+                    self._terminate(proc)
+                    raise Cancelled("İşlem kullanıcı isteğiyle durduruldu.")
+                if timeout is not None and time.monotonic() - start > timeout:
+                    self._terminate(proc)
+                    raise InstallerError(f"Komut zaman aşımına uğradı: {shlex.join(argv)}")
+                for key, _ in sel.select(0.15):
+                    block = os.read(key.fd, 65536)
+                    if not block:
+                        sel.unregister(key.fileobj)
+                        continue
+                    chunks.append(block)
+                    size += len(block)
+                    while size > 4 * 1024 * 1024 and len(chunks) > 1:
+                        size -= len(chunks.popleft())
+                    if stream:
+                        pending += decoder.decode(block).replace("\r", "\n")
+                        lines = pending.split("\n")
+                        pending = lines.pop()
+                        for line in lines:
+                            if line:
+                                self.log(self.redact(line))
+            # stdout erken kapansa da süreç bitene kadar iptal/süre kontrolü sürer.
+            while proc.poll() is None:
+                if not ignore_cancel and interruptible and self.cancel.is_set():
+                    self._terminate(proc)
+                    raise Cancelled("İşlem kullanıcı isteğiyle durduruldu.")
+                if timeout is not None and time.monotonic() - start > timeout:
+                    self._terminate(proc)
+                    raise InstallerError(f"Komut zaman aşımına uğradı: {shlex.join(argv)}")
+                time.sleep(0.05)
+            if stream and pending:
+                self.log(self.redact(pending + decoder.decode(b"", final=True)))
+            result = CommandResult(proc.returncode, self.redact(b"".join(chunks).decode("utf-8", "replace")))
+            if result.returncode not in allowed:
+                raise CommandError(argv, result.returncode, result.output)
+            if not ignore_cancel:
+                self.check_cancel()
+            return result
+        except OSError as exc:
+            raise InstallerError(f"Komut başlatılamadı: {shlex.join(argv)} — {exc}") from exc
+        finally:
+            sel.close()
+            if proc is not None:
+                if proc.poll() is None:
+                    self._terminate(proc)
+                if proc.stdout:
+                    proc.stdout.close()
+            if stdin_file:
+                stdin_file.close()
+
+
+@dataclass(frozen=True)
+class BlockNode:
+    path: str
+    kind: str
+    size: int
+    major_minor: str
+    fstype: str = ""
+    fsver: str = ""
+    fsuuid: str = ""
+    partuuid: str = ""
+    parttype: str = ""
+    pttype: str = ""
+    mounts: tuple[str, ...] = ()
+    holders: tuple[str, ...] = ()
+    ro: bool = False
+    children: tuple[BlockNode, ...] = ()
+    model: str = ""
+    serial: str = ""
+    wwn: str = ""
+    logical_sector: int = 512
+    removable: bool = False
+    diskseq: str = ""
+
+    def walk(self):
+        yield self
+        for child in self.children:
+            yield from child.walk()
+
+    @property
+    def partitions(self) -> tuple[BlockNode, ...]:
+        return tuple(x for x in self.children if x.kind == "part")
+
+    @property
+    def identity(self) -> tuple:
+        return (self.path, self.major_minor, self.size, self.logical_sector,
+                self.model, self.serial, self.wwn, self.diskseq)
+
+    @property
+    def filesystem_signature(self) -> tuple:
+        return tuple(sorted((x.path, x.kind, x.size, x.major_minor, x.fstype,
+                             x.fsuuid, x.partuuid, x.parttype) for x in self.walk()))
+
+    def unavailable_reasons(self) -> list[str]:
+        reasons = []
+        for x in self.walk():
+            if x.ro:
+                reasons.append(f"{x.path}: salt okunur")
+            if x.mounts:
+                reasons.append(f"{x.path}: kullanımda ({', '.join(x.mounts)})")
+            if x.holders or x.kind not in {"disk", "part"}:
+                reasons.append(f"{x.path}: bağlı sanal/RAID/LVM aygıtı var")
+            if x.fstype in FORBIDDEN_FS:
+                reasons.append(f"{x.path}: {x.fstype} desteklenmiyor")
+        return reasons
+
+
+@dataclass(frozen=True)
+class TablePart:
+    node: str
+    start: int
+    size: int
+    type: str
+    uuid: str
+    name: str = ""
+    attrs: str = ""
+
+    @property
+    def end(self):
+        return self.start + self.size - 1
+
+    @property
+    def number(self) -> int:
+        match = re.search(r"(\d+)$", self.node)
+        if not match:
+            raise InstallerError("Bölüm numarası çözülemedi.")
+        return int(match.group(1))
+
+
+@dataclass(frozen=True)
+class PartitionTable:
+    label: str
+    id: str
+    sector_size: int
+    first_lba: int
+    last_lba: int
+    parts: tuple[TablePart, ...]
+
+    @classmethod
+    def from_json(cls, text: str) -> PartitionTable:
+        try:
+            raw = json.loads(text)["partitiontable"]
+            if raw.get("unit") != "sectors":
+                raise ValueError("sektör birimi bekleniyordu")
+            parts = tuple(TablePart(device_path(p["node"]), int(p["start"]), int(p["size"]),
+                                    str(p.get("type", "")).lower(), str(p.get("uuid", "")).lower(),
+                                    str(p.get("name", "")), str(p.get("attrs", "")))
+                          for p in raw.get("partitions", []))
+            return cls(raw["label"], str(raw.get("id", "")).lower(), int(raw.get("sectorsize", 512)),
+                       int(raw.get("firstlba", 0)), int(raw.get("lastlba", 0)), parts)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InstallerError(f"sfdisk JSON çıktısı geçersiz: {exc}") from exc
+
+    @property
+    def signature(self) -> tuple:
+        return (self.label, self.id, self.sector_size, self.first_lba, self.last_lba,
+                tuple(sorted((p.node, p.start, p.size, p.type, p.uuid, p.name, p.attrs) for p in self.parts)))
+
+    def get(self, node: str) -> TablePart:
+        matches = [p for p in self.parts if p.node == node]
+        if len(matches) != 1:
+            raise InstallerError(f"Bölüm seçilen diskin tablosunda bulunamadı: {node}")
+        return matches[0]
+
+    def validate_gpt(self, disk: BlockNode):
+        if self.label != "gpt":
+            raise InstallerError("Yanına kurulum için GPT gerekli. MBR/hibrit diskler otomatik dönüştürülmez.")
+        if self.sector_size != disk.logical_sector or self.sector_size not in {512, 4096}:
+            raise InstallerError("Mantıksal sektör boyutu uyuşmuyor veya desteklenmiyor.")
+        if not self.id or self.first_lba <= 0 or self.last_lba <= self.first_lba:
+            raise InstallerError("GPT sınırları/kimliği geçersiz.")
+        if self.last_lba >= disk.size // self.sector_size:
+            raise InstallerError("GPT diskin fiziksel boyutunu aşıyor.")
+        previous_end = self.first_lba - 1
+        seen = set()
+        for p in sorted(self.parts, key=lambda x: x.start):
+            if p.size <= 0 or p.start <= previous_end or p.end > self.last_lba:
+                raise InstallerError("Çakışan veya sınır dışı GPT bölümleri var.")
+            if not p.uuid or p.uuid in seen:
+                raise InstallerError("Eksik/tekrarlanan bölüm UUID'si var.")
+            seen.add(p.uuid)
+            previous_end = p.end
+        nodes = {p.node for p in self.parts}
+        if nodes != {p.path for p in disk.partitions}:
+            raise InstallerError("Çekirdek bölüm listesi ile GPT uyuşmuyor; yeniden başlatıp tekrar deneyin.")
+        for part in disk.partitions:
+            p = self.get(part.path)
+            if part.size != p.size * self.sector_size or part.partuuid.lower() != p.uuid or part.parttype.lower() != p.type:
+                raise InstallerError(f"Bölüm kimliği/boyutu uyuşmuyor: {part.path}")
+
+    def free_extents(self) -> list[tuple[int, int]]:
+        alignment = MIB // self.sector_size
+        gaps = []
+        cursor = self.first_lba
+        for part in sorted(self.parts, key=lambda p: p.start):
+            start = align_up(cursor, alignment)
+            end_exclusive = (part.start // alignment) * alignment
+            if end_exclusive > start:
+                gaps.append((start, end_exclusive - start))
+            cursor = part.end + 1
+        start = align_up(cursor, alignment)
+        end_exclusive = ((self.last_lba + 1) // alignment) * alignment
+        if end_exclusive > start:
+            gaps.append((start, end_exclusive - start))
+        return gaps
+
+
+class Inspector:
+    COLUMNS = "NAME,PATH,KNAME,TYPE,SIZE,FSTYPE,FSVER,MOUNTPOINTS,MODEL,SERIAL,WWN,RO,RM,PTTYPE,PARTTYPE,PARTUUID,UUID,MAJ:MIN,LOG-SEC"
+
+    def __init__(self, runner: CommandRunner):
+        self.runner = runner
+
+    def scan(self) -> list[BlockNode]:
+        out = self.runner.run(["lsblk", "--json", "--bytes", "--paths", "--output", self.COLUMNS], quiet=True).output
+        try:
+            rows = json.loads(out)["blockdevices"]
+            return [self._node(r) for r in rows if r.get("type") == "disk"
+                    and not re.match(r"^(ram|zram|loop)", Path(r.get("path") or r["name"]).name)]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise InstallerError(f"Diskler okunamadı: {exc}") from exc
+
+    def _node(self, row: dict) -> BlockNode:
+        path = device_path(row.get("path") or row["name"])
+        mm = str(row.get("maj:min", ""))
+        holders: tuple[str, ...] = ()
+        diskseq = ""
+        try:
+            holder_dir = Path("/sys/dev/block") / mm / "holders"
+            if holder_dir.is_dir():
+                holders = tuple(sorted(x.name for x in holder_dir.iterdir()))
+            seq = Path("/sys/dev/block") / mm / "diskseq"
+            if seq.is_file():
+                diskseq = seq.read_text().strip()
+        except OSError as exc:
+            raise InstallerError(f"Aygıt kullanım bilgisi okunamadı: {path}: {exc}") from exc
+        mounts = row.get("mountpoints") or []
+        if isinstance(mounts, str):
+            mounts = [mounts]
+        return BlockNode(
+            path=path, kind=str(row["type"]), size=int(row.get("size") or 0), major_minor=mm,
+            fstype=str(row.get("fstype") or ""), fsver=str(row.get("fsver") or ""),
+            fsuuid=str(row.get("uuid") or ""), partuuid=str(row.get("partuuid") or "").lower(),
+            parttype=str(row.get("parttype") or "").lower(), pttype=str(row.get("pttype") or ""),
+            mounts=tuple(str(x) for x in mounts if x), holders=holders, ro=bool_value(row.get("ro")),
+            children=tuple(self._node(x) for x in row.get("children", [])),
+            model=str(row.get("model") or "").strip(), serial=str(row.get("serial") or "").strip(),
+            wwn=str(row.get("wwn") or "").strip(), logical_sector=int(row.get("log-sec") or 512),
+            removable=bool_value(row.get("rm")), diskseq=diskseq,
+        )
+
+    def disk(self, path: str) -> BlockNode:
+        matches = [d for d in self.scan() if d.path == path]
+        if len(matches) != 1:
+            raise InstallerError("Seçilen fiziksel disk bulunamadı. Varsayılan diske geçilmez.")
+        disk = matches[0]
+        self.check_node(disk)
+        return disk
+
+    @staticmethod
+    def check_node(node: BlockNode):
+        device_path(node.path)
+        info = os.lstat(node.path)
+        if not stat.S_ISBLK(info.st_mode):
+            raise InstallerError(f"Gerçek blok aygıtı değil: {node.path}")
+        mm = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
+        if mm != node.major_minor:
+            raise InstallerError(f"Aygıt kimliği değişmiş: {node.path}")
+
+    def table(self, disk: BlockNode) -> Optional[PartitionTable]:
+        result = self.runner.run(["sfdisk", "--json", disk.path], allowed=(0, 1), quiet=True)
+        if result.returncode != 0:
+            if disk.pttype or disk.partitions:
+                raise InstallerError("Mevcut bölüm tablosu okunamadı; işleme devam edilmiyor.\n" + result.output)
+            return None
+        return PartitionTable.from_json(result.output)
+
+    @staticmethod
+    def check_protective_mbr(path: str):
+        with open(path, "rb", buffering=0) as f:
+            data = f.read(512)
+        if len(data) != 512 or data[510:512] != b"\x55\xaa":
+            raise InstallerError("GPT koruyucu MBR imzası geçersiz.")
+        types = [data[446 + i * 16 + 4] for i in range(4)]
+        if types.count(0xEE) != 1 or any(x not in (0, 0xEE) for x in types):
+            raise InstallerError("Hibrit/standart dışı MBR algılandı; yanına kurulum engellendi.")
+
+    def mount_at(self, path: Path, *, ignore_cancel=False) -> Optional[dict]:
+        result = self.runner.run(["findmnt", "--json", "--mountpoint", str(path), "--output", "TARGET,SOURCE,MAJ:MIN,FSTYPE,OPTIONS"],
+                                 allowed=(0, 1), quiet=True, ignore_cancel=ignore_cancel)
+        if result.returncode == 1:
+            return None
+        try:
+            rows = json.loads(result.output)["filesystems"]
+            if len(rows) != 1 or rows[0]["target"] != str(path):
+                raise ValueError("bağlama noktası belirsiz")
+            return rows[0]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise InstallerError(f"Bağlama doğrulanamadı: {path}: {exc}") from exc
+
+    def mounts_under(self, path: Path) -> list[str]:
+        result = self.runner.run(["findmnt", "--json", "--submounts", "--mountpoint", str(path), "--output", "TARGET"],
+                                 allowed=(0, 1), quiet=True, ignore_cancel=True)
+        if result.returncode == 1:
+            return []
+        found = []
+        def walk(rows):
+            for row in rows:
+                target = row["target"]
+                if target != str(path) and not target.startswith(str(path) + "/"):
+                    raise InstallerError("Temizleme listesinde oturuma ait olmayan bağlama bulundu.")
+                found.append(target)
+                walk(row.get("children", []))
+        try:
+            walk(json.loads(result.output)["filesystems"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise InstallerError(f"Bağlama listesi okunamadı: {exc}") from exc
+        return sorted(set(found), key=lambda x: (x.count("/"), len(x)), reverse=True)
+
+
+@dataclass(frozen=True)
+class InstallConfig:
+    disk: str
+    disk_identity: tuple
+    mode: str
+    username: str
+    hostname: str
+    password: str = field(repr=False, compare=False)
+    de: str = "xfce"
+    root_partition: str = ""
+    boot_partition: str = ""
+    root_size_gib: int = 40  # yeni Linux alanı; 0 yalnız free modunda tüm boş alan
+    locale: str = "tr_TR.UTF-8"
+    timezone: str = "Europe/Istanbul"
+    keyboard: str = "trq"
+
+    def validate(self):
+        device_path(self.disk)
+        if not self.disk_identity:
+            raise InstallerError("Disk seçimi/kimliği eksik.")
+        if self.mode not in MODES or self.de not in DES:
+            raise InstallerError("Geçersiz kurulum modu/masaüstü.")
+        if self.mode == "partition":
+            if not self.root_partition or not self.boot_partition:
+                raise InstallerError("Partition modunda root ve boot bölümü seçimi zorunludur.")
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", self.username):
+            raise InstallerError("Kullanıcı adı en fazla 32 karakter; küçük harf, rakam, _ veya - olmalıdır.")
+        if self.username in {"root", "nobody", "daemon", "bin", "dbus", "mail", "ftp", "http", "uuidd", "polkitd", "avahi", "cups", "git", "sddm", "gdm", "lightdm", "systemd-network", "systemd-resolve", "tss"} or self.username.startswith("systemd-"):
+            raise InstallerError("Bu kullanıcı adı sistem hesapları için ayrılmıştır.")
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", self.hostname):
+            raise InstallerError("Bilgisayar adı: 1–63 küçük harf/rakam/tire; başı ve sonu tire olamaz.")
+        if not 8 <= len(self.password) <= 256 or len(self.password.encode("utf-8")) > 1024:
+            raise InstallerError("Parola 8–256 karakter olmalıdır.")
+        if any(ord(c) < 32 or ord(c) == 127 for c in self.password):
+            raise InstallerError("Parola satır sonu veya kontrol karakteri içeremez.")
+        if self.locale not in {"tr_TR.UTF-8", "en_US.UTF-8"} or self.timezone not in {"Europe/Istanbul", "UTC"} or self.keyboard not in {"trq", "us"}:
+            raise InstallerError("Geçersiz dil/saat dilimi/klavye seçimi.")
+        if not isinstance(self.root_size_gib, int) or self.root_size_gib < 0:
+            raise InstallerError("Yeni Linux alanı geçersiz.")
+
+
+@dataclass(frozen=True)
+class NewPart:
+    start: int
+    size: int
+    type: str
+    uuid: str
+    name: str
+
+    def sfdisk_line(self) -> str:
+        return f'start={self.start}, size={self.size}, type={self.type}, uuid={self.uuid}, name="{self.name}"\n'
+
+
+@dataclass(frozen=True)
+class Plan:
+    config: InstallConfig
+    disk: BlockNode
+    before: Optional[PartitionTable]
+    boot_mode: str
+    root: NewPart
+    boot: NewPart
+    root_existing: str
+    boot_existing: str
+    shrink_source: str = ""
+    shrink_to_sectors: int = 0
+    new_table_id: str = ""
+    first_lba: int = 0
+    last_lba: int = 0
+    root_fsuuid: str = ""
+    boot_volume_id: str = ""
+    bootloader_id: str = ""
+    packages: tuple[str, ...] = ()
+
+    @property
+    def confirmation(self):
+        if self.config.mode == "wipe":
+            return f"SIL {self.disk.path}"
+        if self.config.mode == "partition":
+            return f"SIL {self.root_existing}"
+        if self.config.mode == "shrink":
+            return f"KUCULT {self.shrink_source}"
+        return f"KUR {self.disk.path}"
+
+    def public(self) -> dict:
+        # dataclasses.asdict(config) KULLANILMAZ: parola dışarı çıkmamalıdır.
+        return {
+            "version": VERSION, "disk": self.disk.path, "disk_identity": list(self.disk.identity),
+            "mode": self.config.mode, "boot_mode": self.boot_mode,
+            "username": self.config.username, "hostname": self.config.hostname, "de": self.config.de,
+            "locale": self.config.locale, "timezone": self.config.timezone, "keyboard": self.config.keyboard,
+            "root": dataclasses.asdict(self.root), "boot": dataclasses.asdict(self.boot),
+            "root_existing": self.root_existing, "boot_existing": self.boot_existing,
+            "shrink_source": self.shrink_source, "shrink_to_sectors": self.shrink_to_sectors,
+            "root_fsuuid": self.root_fsuuid, "bootloader_id": self.bootloader_id,
+            "packages": list(self.packages),
+        }
+
+    def summary(self) -> str:
+        c = self.config
+        sector = self.disk.logical_sector
+        rows = [
+            "KURULUM PLANI — henüz hedef disk değiştirilmedi",
+            "", f"Disk: {self.disk.path}   {human_size(self.disk.size)}",
+            f"Model: {self.disk.model or '—'}", f"Seri / WWN: {self.disk.serial or self.disk.wwn or 'bildirilmedi'}",
+            f"Mod: {MODES[c.mode]}", f"Önyükleme: {self.boot_mode.upper()} / GPT",
+            f"Yeni Linux kökü: {human_size(self.root.size * sector)} — ext4",
+            f"Kök konumu: başlangıç sektör {self.root.start}, sektör sayısı {self.root.size}",
+            f"Kök bölüm UUID: {self.root.uuid}",
+        ]
+        if c.mode == "wipe":
+            rows += ["", "UYARI: Seçilen diskteki TÜM bölümler ve veriler silinecek.", "Yeni bölüm tablosu ve yeni açılış bölümü oluşturulacak."]
+        elif c.mode == "partition":
+            rows += ["", f"UYARI: {self.root_existing} üzerindeki TÜM veriler silinecek.", "Diğer bölümlerin sınırları ve dosya sistemleri korunacak."]
+        elif c.mode == "shrink":
+            rows += ["", f"UYARI: {self.shrink_source} çevrimdışı ext4 küçültmesine alınacak.",
+                     f"Mevcut bölümün kalan boyutu: {human_size(self.shrink_to_sectors * sector)}",
+                     "Dosya sistemi kontrolünden sonra önce ext4, sonra bölüm sınırı küçültülecek.",
+                     "Elektrik kesilmesi/donanım arızası veri kaybına neden olabilir; tam yedek gerekli."]
+        else:
+            rows += ["", "Yalnızca ayrılmamış boş alanda yeni Linux bölümü oluşturulacak.", "Mevcut bölümler küçültülmeyecek veya formatlanmayacak."]
+        if self.boot_existing:
+            rows += [f"Korunacak açılış bölümü: {self.boot_existing} (FORMATLANMAZ)"]
+        if self.boot_mode == "uefi":
+            rows += [f"Yeni EFI dizini / firmware girdisi: {self.bootloader_id}", "Secure Boot kapalı olmalıdır; mevcut diğer EFI dizinleri korunur."]
+        else:
+            rows += ["BIOS: GRUB seçilen diskin açılış kodunu güncelleyecek."]
+        rows += ["", f"Masaüstü: {DES[c.de]['name']}", f"Kullanıcı: {c.username} (parolalı sudo)",
+                 f"Bilgisayar adı: {c.hostname}", f"Dil / saat / klavye: {c.locale} / {c.timezone} / {c.keyboard}",
+                 "Root parolayla oturum açmaya kapalı; yönetim sudo ile yapılır.",
+                 "Diğer işletim sistemlerinin GRUB menüsünde bulunması garanti edilmez.",
+                 "", f"Kurulumdan önce yazılacak onay: {self.confirmation}"]
+        return "\n".join(rows)
+
+
+def build_plan(c: InstallConfig, disk: BlockNode, table: Optional[PartitionTable], boot_mode: str) -> Plan:
+    c.validate()
+    if c.disk != disk.path or tuple(c.disk_identity) != disk.identity:
+        raise InstallerError("Disk kimliği seçimden sonra değişti. Yeniden tarayın.")
+    reasons = disk.unavailable_reasons()
+    if reasons:
+        raise InstallerError("Hedef disk güvenli durumda değil:\n" + "\n".join(reasons))
+    if disk.kind != "disk" or disk.logical_sector not in {512, 4096}:
+        raise InstallerError("Yalnız 512/4096 bayt sektörlü normal fiziksel/sanal diskler desteklenir.")
+    if boot_mode not in {"uefi", "bios"}:
+        raise InstallerError("Önyükleme modu bilinmiyor.")
+    sector = disk.logical_sector
+    alignment = MIB // sector
+    new_uuid = lambda: str(uuid.uuid4())
+    root_uuid, boot_uuid = new_uuid(), new_uuid()
+    root_existing = boot_existing = shrink_source = ""
+    shrink_to = 0
+    table_id = ""
+    first_lba = last_lba = 0
+    if c.mode == "wipe":
+        entry_sectors = math.ceil(128 * 128 / sector)
+        first_lba = 2 + entry_sectors
+        last_lba = disk.size // sector - entry_sectors - 2
+        boot_start = align_up(first_lba, alignment)
+        boot_size = (512 * MIB if boot_mode == "uefi" else 2 * MIB) // sector
+        boot = NewPart(boot_start, boot_size, ESP_TYPE if boot_mode == "uefi" else BIOS_TYPE, boot_uuid, "Hiroki boot")
+        root_start = align_up(boot.start + boot.size, alignment)
+        root_end = ((last_lba + 1) // alignment) * alignment
+        root = NewPart(root_start, root_end - root_start, LINUX_TYPE, root_uuid, "Hiroki root")
+        table_id = new_uuid()
+    else:
+        if table is None:
+            raise InstallerError("Yanına kurulum için mevcut GPT tablo ve açılış bölümü gerekli.")
+        table.validate_gpt(disk)
+        first_lba, last_lba = table.first_lba, table.last_lba
+        bp = table.get(c.boot_partition)
+        boot_node = next((p for p in disk.partitions if p.path == bp.node), None)
+        required_type = ESP_TYPE if boot_mode == "uefi" else BIOS_TYPE
+        if boot_mode == "uefi" and bp.type != ESP_TYPE:
+            raise InstallerError("UEFI modunda EFI System Partition (ESP) bölümü gerekli.")
+        if boot_mode == "bios" and bp.type not in (BIOS_TYPE, ESP_TYPE):
+            raise InstallerError("BIOS modunda BIOS boot veya EFI System Partition bölümü gerekli.")
+        if boot_node is None:
+            raise InstallerError("Seçilen boot bölümü bulunamadı.")
+        if boot_mode == "uefi" and (boot_node.fstype != "vfat" or bp.size * sector < 96 * MIB or not boot_node.fsuuid):
+            raise InstallerError("Mevcut ESP: en az 96 MiB, okunabilir FAT ve geçerli UUID gerekli.")
+        if boot_mode == "bios" and bp.type == BIOS_TYPE and (bp.size * sector < MIB or boot_node.fstype):
+            raise InstallerError("BIOS+GPT için en az 1 MiB, dosya sistemi olmayan BIOS boot bölümü gerekli.")
+        boot = NewPart(bp.start, bp.size, bp.type, bp.uuid, bp.name)
+        boot_existing = bp.node
+        if c.mode == "free":
+            gaps = table.free_extents()
+            if not gaps:
+                raise InstallerError("Ayrılmamış boş alan yok. NTFS/Btrfs/XFS bölümlerini bu araç küçültmez.")
+            start, available = max(gaps, key=lambda x: x[1])
+            size = available if c.root_size_gib == 0 else c.root_size_gib * GIB // sector
+            if size > available:
+                raise InstallerError(f"En büyük boş alan {human_size(available * sector)}; istenen alan sığmıyor.")
+            root = NewPart(start, size, LINUX_TYPE, root_uuid, "Hiroki root")
+        else:
+            rp = table.get(c.root_partition)
+            node = next((p for p in disk.partitions if p.path == rp.node), None)
+            if node is None or rp.node == bp.node or rp.type not in ROOT_TYPES:
+                raise InstallerError("Ayrı bir Linux veri/kök bölümü seçmelisiniz; ESP/MSR/kurtarma bölümü kullanılamaz.")
+            if c.mode == "partition":
+                if node.fstype not in {"", "ext4", "btrfs", "xfs", "ntfs"}:
+                    raise InstallerError("Hazır bölüm modunda ext4, btrfs, xfs veya ntfs bölümü kabul edilir.")
+                root = NewPart(rp.start, rp.size, rp.type, rp.uuid, rp.name)
+                root_existing = rp.node
+            else:
+                if node.fstype != "ext4" or not node.fsuuid:
+                    raise InstallerError("Otomatik küçültme yalnız UUID'si bulunan ext4 için uygulanır; NTFS/XFS/Btrfs desteklenmez.")
+                if rp.start % alignment:
+                    raise InstallerError("Otomatik ext4 küçültme için bölüm başlangıcı 1 MiB hizalı olmalıdır.")
+                if c.root_size_gib < MIN_ROOT // GIB:
+                    raise InstallerError("Yeni Linux alanı en az 32 GiB olmalıdır.")
+                size = c.root_size_gib * GIB // sector
+                end_exclusive = ((rp.end + 1) // alignment) * alignment
+                start = end_exclusive - size
+                shrink_to = start - rp.start
+                if shrink_to * sector < MIN_RETAINED:
+                    raise InstallerError("Mevcut ext4 bölümünde en az 16 GiB bırakılmalıdır.")
+                root = NewPart(start, size, LINUX_TYPE, root_uuid, "Hiroki root")
+                shrink_source = rp.node
+    if root.size * sector < MIN_ROOT:
+        raise InstallerError("Linux kök bölümü için en az 32 GiB gerekli.")
+    if root.start <= 0 or root.size <= 0 or root.start + root.size - 1 > last_lba:
+        raise InstallerError("Planlanan bölüm sınırları geçersiz.")
+    if not (root.start + root.size <= boot.start or boot.start + boot.size <= root.start):
+        raise InstallerError("Kök ve açılış bölümü çakışıyor.")
+    if root_existing:
+        actual_fsuuid = node.fsuuid if node else ""
+        root_fsuuid = actual_fsuuid if actual_fsuuid else new_uuid()
+    else:
+        root_fsuuid = new_uuid()
+    return Plan(c, disk, table, boot_mode, root, boot, root_existing, boot_existing,
+                shrink_source, shrink_to, table_id, first_lba, last_lba,
+                root_fsuuid, uuid.uuid4().hex[:8].upper(), "HIROKI-" + uuid.uuid4().hex[:8].upper())
+
+
+def ext4_fields(text: str) -> dict[str, str]:
+    return {line.split(":", 1)[0].strip(): line.split(":", 1)[1].strip()
+            for line in text.splitlines() if ":" in line}
+
+
+def ext4_target_blocks(header: str, estimate: str, new_partition_bytes: int) -> int:
+    fields = ext4_fields(header)
+    try:
+        blocksize = int(fields["Block size"])
+        count = int(fields["Block count"])
+        match = re.search(r"Estimated minimum size of the filesystem:\s*(\d+)", estimate)
+        if not match:
+            raise ValueError("minimum boyut çıktısı bulunamadı")
+        minimum = int(match.group(1))
+    except (KeyError, ValueError) as exc:
+        raise InstallerError(f"ext4 boyut bilgisi çözülemedi: {exc}") from exc
+    # resize2fs dokümanı özellikle 1K/2K minimum tahmininde hata olabileceğini belirtir.
+    if blocksize != 4096:
+        raise InstallerError("Otomatik küçültme yalnız 4096 bayt bloklu ext4 üzerinde desteklenir.")
+    features = fields.get("Filesystem features", "").split()
+    if "bigalloc" in features or "journal_dev" in features or fields.get("Journal device", "0") not in {"0", "0x0000", "0x00000000"}:
+        raise InstallerError("bigalloc/harici journal ext4 küçültmesi desteklenmiyor.")
+    target = new_partition_bytes // blocksize
+    margin = max(2 * GIB // blocksize, math.ceil(minimum * 0.10))
+    if minimum <= 0 or target < minimum + margin:
+        raise InstallerError("ext4 için güvenli boşluk yetersiz: minimum tahmine ek en az 2 GiB / %10 pay gerekir.")
+    if target >= count:
+        raise InstallerError("Dosya sistemi zaten istenen boyuttan küçük/eşit. Bu özel durum otomatik küçültülmez; GParted kullanın.")
+    return target
+
+
+def validate_transition(before: PartitionTable, after: PartitionTable,
+                        new_root: Optional[NewPart] = None, shrink_node: str = "", shrink_size: int = 0):
+    if (before.label, before.id, before.sector_size, before.first_lba, before.last_lba) != (after.label, after.id, after.sector_size, after.first_lba, after.last_lba):
+        raise InstallerError("Bölüm işlemi beklenmedik biçimde GPT başlığını değiştirdi.")
+    expected_count = len(before.parts) + (1 if new_root else 0)
+    if len(after.parts) != expected_count:
+        raise InstallerError("İşlem sonrasında bölüm sayısı beklenenden farklı.")
+    for old in before.parts:
+        new = after.get(old.node)
+        expected = dataclasses.replace(old, size=shrink_size) if old.node == shrink_node else old
+        if new != expected:
+            raise InstallerError(f"Korunması gereken bölüm beklenmedik biçimde değişti: {old.node}")
+    if new_root:
+        matches = [p for p in after.parts if p.uuid == new_root.uuid]
+        if len(matches) != 1:
+            raise InstallerError("Yeni bölüm kendi UUID'si ile kesin olarak bulunamadı.")
+        p = matches[0]
+        if (p.start, p.size, p.type) != (new_root.start, new_root.size, new_root.type):
+            raise InstallerError("Yeni bölümün konumu/boyutu/türü plan ile uyuşmuyor.")
+        if p.node in {x.node for x in before.parts}:
+            raise InstallerError("Yeni bölüm eski bir aygıtı işaret ediyor.")
+
+
+@dataclass(frozen=True)
+class InstallResult:
+    success: bool
+    cancelled: bool
+    message: str
+    log_dir: str
+    modified: bool = False
+    warnings: tuple[str, ...] = ()
+
+
+class InstallerEngine:
+    def __init__(self, emit: Callable[[str, object], None] = lambda *_: None):
+        self.emit = emit
+        self.cancel = threading.Event()
+        self.runner = CommandRunner(self.log, self.cancel)
+        self.inspector = Inspector(self.runner)
+        self.session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        self.work: Optional[Path] = None
+        self.target: Optional[Path] = None
+        self.log_dir: Optional[Path] = None
+        self._log_file = None
+        self._lock_file = None
+        self._prepared_plan: Optional[Plan] = None
+        self._install_started = False
+        self.root_node: Optional[BlockNode] = None
+        self.boot_node: Optional[BlockNode] = None
+        self.modified = False
+        self.warnings: list[str] = []
+
+    def log(self, message: str):
+        message = self.runner.redact(str(message)) if hasattr(self, "runner") else str(message)
+        message = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", message)
+        if self._log_file:
+            self._log_file.write(f"{dt.datetime.now().isoformat(timespec='seconds')} {message}\n")
+            self._log_file.flush()
+        self.emit("log", message)
+
+    def status(self, text: str, fraction: Optional[float] = None):
+        self.log(text)
+        self.emit("status", text)
+        if fraction is not None:
+            self.emit("progress", max(0.0, min(1.0, fraction)))
+
+    def _open_session(self):
+        base = Path("/run/hiroki-installer")
+        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if base.is_symlink() or base.stat().st_uid != 0 or base.stat().st_mode & 0o022:
+            raise InstallerError("Güvenli çalışma dizini sahipliği/izinleri geçersiz.")
+        self.work = base / self.session_id
+        self.work.mkdir(mode=0o700)
+        self.target = self.work / "target"
+        self.target.mkdir(mode=0o700)
+        self.log_dir = Path("/var/log/hiroki-installer") / self.session_id
+        self.log_dir.mkdir(mode=0o700, parents=True)
+        self._log_file = open(self.log_dir / "install.log", "x", encoding="utf-8")
+        os.chmod(self.log_dir / "install.log", 0o600)
+        lock = base / "installer.lock"
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        self._lock_file = os.fdopen(fd, "w")
+        try:
+            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise InstallerError("Başka bir Hiroki kurulum/ön kontrol oturumu açık.") from exc
+
+    @staticmethod
+    def environment_problems(boot: Optional[str] = None) -> list[str]:
+        boot = boot or detect_boot()
+        problems = []
+        if os.geteuid() != 0:
+            problems.append("Kurulum root yetkisi gerektirir; canlı oturumda sudo -E python3 hiroki_installer.py kullanın.")
+        if platform.system() != "Linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
+            problems.append("Yalnız x86-64 Linux desteklenir.")
+        if not Path("/etc/arch-release").is_file() or not Path("/run/archiso").is_dir():
+            problems.append("Archiso tabanlı canlı Arch/Hiroki ortamı gerekli; kurulu ana sistemde kurulum engellenir.")
+        required = list(TOOLS_COMMON) + (["efibootmgr", "mkfs.fat", "fsck.fat"] if boot == "uefi" else [])
+        missing = [x for x in required if shutil.which(x, path=SAFE_PATH) is None]
+        if missing:
+            problems.append("Canlı ortamda eksik araçlar: " + ", ".join(missing))
+        try:
+            if boot == "uefi" and secure_boot_enabled():
+                problems.append("Secure Boot açık. Bu araç imzalı Secure Boot zinciri kurmaz; firmware'den kapatın.")
+        except OSError as exc:
+            problems.append(f"Secure Boot durumu doğrulanamadı: {exc}")
+        return problems
+
+    def prepare(self, config: InstallConfig) -> Plan:
+        config.validate()
+        self.runner.add_secret(config.password)
+        problems = self.environment_problems()
+        if problems:
+            raise InstallerError("\n".join(problems))
+        self._open_session()
+        self.status("Ön kontrol: disk, bölüm tablosu ve kullanım durumu doğrulanıyor…", 0.02)
+        disk = self.inspector.disk(config.disk)
+        table = self.inspector.table(disk)
+        plan = build_plan(config, disk, table, detect_boot())
+        if config.mode != "wipe":
+            self.inspector.check_protective_mbr(disk.path)
+            self.runner.run(["sfdisk", "--verify", disk.path])
+        if plan.boot_mode == "uefi":
+            self.runner.run(["efibootmgr", "--verbose"], timeout=30)
+            if plan.boot_existing:
+                self._check_existing_esp(plan)
+        if plan.shrink_source:
+            self.status("Ön kontrol: mevcut ext4 salt okunur olarak denetleniyor (hedefe yazılmaz)…", 0.05)
+            self.runner.run(["e2fsck", "-f", "-n", plan.shrink_source], stream=True, timeout=None)
+            self._ext4_blocks(plan)
+        self.status("Ön kontrol: paket anahtarlığı, ağ, aynalar ve paket adları kontrol ediliyor…", 0.10)
+        self.runner.run(["pacman-key", "--init"], timeout=600, stream=True)
+        self.runner.run(["pacman-key", "--populate", "archlinux"], timeout=600, stream=True)
+        # Yalnız canlı ortamın paket veritabanı güncellenir; hedef henüz değiştirilmez.
+        self.runner.run(["pacman", "-Sy", "--noconfirm"], timeout=1200, stream=True)
+        packages = list(BASE_PACKAGES) + list(DES[config.de]["packages"])
+        cpu = Path("/proc/cpuinfo").read_text(errors="replace")
+        if "GenuineIntel" in cpu:
+            packages.append("intel-ucode")
+        elif "AuthenticAMD" in cpu:
+            packages.append("amd-ucode")
+        # hiroki-dm giriş ekranı (greeter) kurulu sistemde de çalışsın diye gerekli paketler
+        packages += [
+            "python", "gtk3", "python-gobject", "python-pam", "vte3",
+            "xorg-xhost", "xorg-xdpyinfo",
+        ]
+        packages = list(dict.fromkeys(packages))
+        self.runner.run(["pacman", "-Sp", "--noconfirm", "--print-format", "%n", *packages], timeout=600, stream=True)
+        plan = dataclasses.replace(plan, packages=tuple(packages))
+        self._assert_fresh(plan)
+        self._prepared_plan = plan
+        self.status("Ön kontroller tamamlandı. Hedef diske henüz yazılmadı; planı ve hedefi kontrol edin.", 0.15)
+        return plan
+
+    def _check_existing_esp(self, plan: Plan):
+        self.runner.run(["fsck.fat", "-n", plan.boot_existing], timeout=300, stream=True)
+        probe = self.work / "esp-check"
+        probe.mkdir(mode=0o700)
+        try:
+            self.runner.run(["mount", "-t", "vfat", "-o", "ro,nosuid,nodev,noexec", plan.boot_existing, str(probe)], timeout=None, interruptible=False)
+            info = self.inspector.mount_at(probe)
+            expected = next(p for p in plan.disk.partitions if p.path == plan.boot_existing)
+            if not info or info.get("maj:min") != expected.major_minor or "ro" not in info.get("options", "").split(","):
+                raise InstallerError("ESP salt okunur bağlaması doğrulanamadı.")
+            space = os.statvfs(probe)
+            if space.f_bavail * space.f_frsize < 32 * MIB:
+                raise InstallerError("Mevcut EFI bölümünde en az 32 MiB boş alan gerekli.")
+            if (probe / "EFI" / plan.bootloader_id).exists():
+                raise InstallerError("Yeni EFI dizini zaten mevcut; yeni plan oluşturun.")
+        finally:
+            if self.inspector.mount_at(probe, ignore_cancel=True):
+                self.runner.run(["umount", "--", str(probe)], timeout=None, interruptible=False, ignore_cancel=True)
+            with contextlib.suppress(OSError):
+                probe.rmdir()
+
+    def _ext4_blocks(self, plan: Plan) -> int:
+        header = self.runner.run(["dumpe2fs", "-h", plan.shrink_source], timeout=120).output
+        estimate = self.runner.run(["resize2fs", "-P", plan.shrink_source], timeout=None).output
+        return ext4_target_blocks(header, estimate, plan.shrink_to_sectors * plan.disk.logical_sector)
+
+    def _assert_idle_identity(self, plan: Plan) -> BlockNode:
+        disk = self.inspector.disk(plan.disk.path)
+        if disk.identity != plan.disk.identity:
+            raise InstallerError("Hedef disk değişti/çıkarıldı; kurulum durduruldu.")
+        reasons = disk.unavailable_reasons()
+        if reasons:
+            raise InstallerError("Hedef artık kullanımda/güvensiz:\n" + "\n".join(reasons))
+        return disk
+
+    def _assert_fresh(self, plan: Plan):
+        disk = self._assert_idle_identity(plan)
+        table = self.inspector.table(disk)
+        if disk.filesystem_signature != plan.disk.filesystem_signature:
+            raise InstallerError("Disk/bölüm içeriğinin kimliği ön kontrolden sonra değişti. Yeni ön kontrol gerekli.")
+        if (table.signature if table else None) != (plan.before.signature if plan.before else None):
+            raise InstallerError("Bölüm tablosu değişti. Eski kurulum planı kullanılmaz.")
+        if detect_boot() != plan.boot_mode:
+            raise InstallerError("Önyükleme ortamı değişti.")
+        if plan.boot_mode == "uefi" and secure_boot_enabled():
+            raise InstallerError("Secure Boot açık; kurulum durduruldu.")
+
+    def _backup(self, plan: Plan):
+        self._save_log_file("plan.json", json.dumps(plan.public(), ensure_ascii=False, indent=2))
+        result = self.runner.run(["sfdisk", "--dump", plan.disk.path], allowed=(0, 1))
+        if plan.before is not None:
+            if result.returncode != 0:
+                raise InstallerError("Bölüm tablosu yedeği alınamadı.\n" + result.output)
+            self._save_log_file("partition-table.sfdisk", result.output)
+            self.runner.run(["sfdisk", "--backup-pt-sectors", "--backup-file", str(self.log_dir / "partition-sectors"), plan.disk.path])
+        else:
+            self._save_log_file("partition-table.txt", "Ön kontrolde bölüm tablosu bulunamadı.\n")
+        self._save_log_file("UYARI.txt", "Bu dosyalar YALNIZ bölüm tablosu/teşhis yedeğidir. Kullanıcı dosyalarının yedeği değildir.\nBiçimlendirme/küçültme sonrası otomatik geri yükleme yapılmaz. Canlı ortam kapanınca bu günlükler kaybolabilir.\n")
+
+    def _save_log_file(self, name: str, content: str):
+        path = self.log_dir / name
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(self.runner.redact(content))
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _settled_table(self, plan: Plan) -> tuple[BlockNode, PartitionTable]:
+        try:
+            self.runner.run(["blockdev", "--rereadpt", plan.disk.path], timeout=None, interruptible=False)
+        except CommandError:
+            pass  # disk meşgulse atla
+        self.runner.run(["udevadm", "settle", "--timeout=30"], timeout=40)
+        disk = self._assert_idle_identity(plan)
+        table = self.inspector.table(disk)
+        if table is None:
+            raise InstallerError("İşlemden sonra bölüm tablosu bulunamadı.")
+        table.validate_gpt(disk)
+        self.runner.run(["sfdisk", "--verify", disk.path])
+        return disk, table
+
+    def _apply_layout(self, plan: Plan):
+        self._assert_fresh(plan)
+        c = plan.config
+        if c.mode == "wipe":
+            script = (f"label: gpt\nlabel-id: {plan.new_table_id}\nunit: sectors\nsector-size: {plan.disk.logical_sector}\n"
+                      f"table-length: 128\nfirst-lba: {plan.first_lba}\nlast-lba: {plan.last_lba}\n\n"
+                      + plan.boot.sfdisk_line() + plan.root.sfdisk_line())
+            args = ["sfdisk", "--wipe", "always", "--wipe-partitions", "always"]
+            self.runner.run([*args, "--no-act", plan.disk.path], input_text=script)
+            self._assert_fresh(plan)
+            self.modified = True
+            self.runner.run([*args, plan.disk.path], input_text=script, timeout=None, interruptible=False, stream=True)
+            disk, table = self._settled_table(plan)
+            if table.id != plan.new_table_id or len(table.parts) != 2:
+                raise InstallerError("Yeni GPT planla uyuşmuyor.")
+            for wanted in (plan.root, plan.boot):
+                matches = [p for p in table.parts if p.uuid == wanted.uuid]
+                if len(matches) != 1 or (matches[0].start, matches[0].size, matches[0].type) != (wanted.start, wanted.size, wanted.type):
+                    raise InstallerError("Oluşturulan bölüm sınırları/UUID'si yanlış.")
+        elif c.mode == "partition":
+            disk, table = self._assert_idle_identity(plan), plan.before
+        else:
+            before = plan.before
+            if plan.shrink_source:
+                self.status("Kritik adım: ext4 kontrolü ve küçültme. İptal, çalışan disk komutundan sonra uygulanır.", 0.23)
+                self._assert_fresh(plan)
+                self.modified = True
+                self.runner.run(["e2fsck", "-f", "-p", plan.shrink_source], allowed=(0, 1), timeout=None, interruptible=False, stream=True)
+                target_blocks = self._ext4_blocks(plan)
+                self._assert_fresh(plan)
+                self.runner.run(["resize2fs", "-p", plan.shrink_source, str(target_blocks)], timeout=None, interruptible=False, stream=True)
+                self.runner.run(["e2fsck", "-f", "-n", plan.shrink_source], timeout=None, interruptible=False, stream=True)
+                header = ext4_fields(self.runner.run(["dumpe2fs", "-h", plan.shrink_source]).output)
+                actual_bytes = int(header["Block count"]) * int(header["Block size"])
+                if actual_bytes > plan.shrink_to_sectors * plan.disk.logical_sector:
+                    raise InstallerError("Küçülen dosya sistemi yeni bölüm boyutuna sığmıyor; bölüm tablosuna dokunulmadı.")
+                self._assert_fresh(plan)
+                old = before.get(plan.shrink_source)
+                self.runner.run(["sfdisk", "--wipe", "never", "--wipe-partitions", "never", "--partno", str(old.number), plan.disk.path],
+                                input_text=f"size={plan.shrink_to_sectors}\n", timeout=None, interruptible=False, stream=True)
+                _, shrunk = self._settled_table(plan)
+                validate_transition(before, shrunk, shrink_node=old.node, shrink_size=plan.shrink_to_sectors)
+                before = shrunk
+            self._assert_idle_identity(plan)
+            current = self.inspector.table(self.inspector.disk(plan.disk.path))
+            if current is None or current.signature != before.signature:
+                raise InstallerError("Yeni bölüm oluşturmadan önce tablo beklenmedik biçimde değişti.")
+            args = ["sfdisk", "--append", "--wipe", "never", "--wipe-partitions", "never"]
+            self.runner.run([*args, "--no-act", plan.disk.path], input_text=plan.root.sfdisk_line())
+            self.modified = True
+            self.runner.run([*args, plan.disk.path], input_text=plan.root.sfdisk_line(), timeout=None, interruptible=False, stream=True)
+            disk, table = self._settled_table(plan)
+            validate_transition(before, table, new_root=plan.root)
+        root_matches = [p for p in table.parts if p.uuid == plan.root.uuid]
+        boot_matches = [p for p in table.parts if p.uuid == plan.boot.uuid]
+        if len(root_matches) != 1 or len(boot_matches) != 1 or root_matches[0].node == boot_matches[0].node:
+            raise InstallerError("Kök/açılış bölümlerinin kimlikleri kesin olarak doğrulanamadı.")
+        self.root_node = next((p for p in disk.partitions if p.path == root_matches[0].node), None)
+        self.boot_node = next((p for p in disk.partitions if p.path == boot_matches[0].node), None)
+        if not self.root_node or not self.boot_node:
+            raise InstallerError("Yeni bölümün çekirdek aygıtı hazır değil.")
+        self.inspector.check_node(self.root_node)
+        self.inspector.check_node(self.boot_node)
+        self._post_layout_signature = table.signature
+
+    def _assert_layout_and_nodes(self, plan: Plan):
+        disk = self._assert_idle_identity(plan)
+        table = self.inspector.table(disk)
+        if table is None or table.signature != self._post_layout_signature:
+            raise InstallerError("Biçimlendirme/bağlama öncesinde bölüm tablosu değişti.")
+        for expected in (self.root_node, self.boot_node):
+            matches = [p for p in disk.partitions if p.path == expected.path and p.major_minor == expected.major_minor and p.partuuid == expected.partuuid and p.size == expected.size]
+            if len(matches) != 1:
+                raise InstallerError("Bölüm aygıtı/kimliği değişti; işlem engellendi.")
+            self.inspector.check_node(matches[0])
+
+    def _blkid(self, path: str, tag: str) -> str:
+        return self.runner.run(["blkid", "-p", "-s", tag, "-o", "value", path], quiet=True).output.strip()
+
+    def _format(self, plan: Plan):
+        self._assert_layout_and_nodes(plan)
+        if plan.root_existing:
+            self.log(f"Mevcut bölüm korunuyor: {plan.root_existing} (yeniden formatlanmaz)")
+        else:
+            self.modified = True
+            self.runner.run(["mkfs.ext4", "-F", "-L", "hiroki-root", "-U", plan.root_fsuuid,
+                             "-E", "nodiscard", self.root_node.path], timeout=None, interruptible=False, stream=True)
+            if self._blkid(self.root_node.path, "TYPE") != "ext4" or self._blkid(self.root_node.path, "UUID").lower() != plan.root_fsuuid:
+                raise InstallerError("Kök dosya sistemi doğrulanamadı.")
+        # Mevcut ESP hiçbir koşulda biçimlendirilmez.
+        if plan.boot_mode == "uefi" and not plan.boot_existing:
+            self._assert_layout_and_nodes(plan)
+            self.modified = True
+            self.runner.run(["mkfs.fat", "-F", "32", "-n", "HIROKI_EFI", "-i", plan.boot_volume_id, self.boot_node.path], timeout=None, interruptible=False, stream=True)
+        if plan.boot_mode == "uefi":
+            if self._blkid(self.boot_node.path, "TYPE") != "vfat":
+                raise InstallerError("EFI dosya sistemi FAT değil.")
+            if plan.boot_existing:
+                original = next(p for p in plan.disk.partitions if p.path == plan.boot_existing)
+                if self._blkid(self.boot_node.path, "UUID").lower() != original.fsuuid.lower():
+                    raise InstallerError("Mevcut EFI dosya sistemi kimliği değişti.")
+
+    def _verify_mounts(self, plan: Plan):
+        root = self.inspector.mount_at(self.target)
+        valid_fs = {"ext4", "btrfs", "xfs", "ntfs"}
+        if not root or root.get("maj:min") != self.root_node.major_minor or root.get("fstype") not in valid_fs or "rw" not in root.get("options", "").split(","):
+            raise InstallerError("Hedef kök bağlaması doğrulanamadı; canlı ortama yazma engellendi.")
+        if plan.boot_mode == "uefi":
+            boot = self.inspector.mount_at(self.target / "boot/efi")
+            if not boot or boot.get("maj:min") != self.boot_node.major_minor or boot.get("fstype") != "vfat":
+                raise InstallerError("EFI bağlaması doğrulanamadı.")
+
+    def _mount(self, plan: Plan):
+        self._assert_layout_and_nodes(plan)
+        if self.inspector.mount_at(self.target):
+            raise InstallerError("Oturumun hedef dizini zaten bağlı.")
+        fstype = self._blkid(self.root_node.path, "TYPE") or "ext4"
+        mount_opts = "rw,relatime"
+        if fstype == "ntfs":
+            mount_opts = "rw,relatime,uid=0,gid=0"
+        self.runner.run(["mount", "-t", fstype, "-o", mount_opts, self.root_node.path, str(self.target)], timeout=None, interruptible=False)
+        root = self.inspector.mount_at(self.target)
+        if not root or root.get("maj:min") != self.root_node.major_minor:
+            raise InstallerError("Kök mount başarısız/yanlış aygıt.")
+        if plan.boot_mode == "uefi":
+            esp = self.target / "boot/efi"
+            esp.mkdir(parents=True, mode=0o755)
+            self.runner.run(["mount", "-t", "vfat", "-o", "rw,umask=0077,nosuid,nodev,noexec", self.boot_node.path, str(esp)], timeout=None, interruptible=False)
+            space = os.statvfs(esp)
+            if space.f_bavail * space.f_frsize < 32 * MIB:
+                raise InstallerError("EFI bölümünde boş alan yetersiz.")
+        self._verify_mounts(plan)
+
+    def _write_target(self, relative: str, text: str, mode: int = 0o644):
+        if not self.target or relative.startswith("/") or ".." in Path(relative).parts:
+            raise InstallerError("Geçersiz hedef dosya yolu.")
+        path = self.target / relative
+        # Paketlerin normal /etc yapısına yazılır; hedef dışına yönlenen symlink reddedilir.
+        cursor = self.target
+        for part in Path(relative).parts[:-1]:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise InstallerError(f"Yapılandırma dizini symlink olamaz: {cursor}")
+            cursor.mkdir(mode=0o755, exist_ok=True)
+        if path.is_symlink():
+            os.unlink(path)
+        fd, temporary = tempfile.mkstemp(prefix=".hiroki-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                os.fchmod(f.fileno(), mode)
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
+
+    def _chroot(self, *args, **kwargs) -> CommandResult:
+        return self.runner.run(["arch-chroot", str(self.target), *args], **kwargs)
+
+    _HIROKI_DM_BIN = (
+        "hiroki-dm", "hiroki-dm-greeter", "hiroki-dm-session",
+        "hiroki-dm-xsession", "hiroki-dm-xinit", "hiroki-dm-wrapper",
+        "hiroki-dm-gui",
+    )
+
+    def _install_hiroki_dm(self, plan: Plan):
+        """Hiroki'nin kendi giriş ekranını (hiroki-dm) kurulu sisteme taşır.
+
+        canlı ortamdaki /usr/bin/hiroki-dm* ve servis/conf dosyalarını hedefe
+        kopyalar; kurulu sisteme özel hiroki-dm.conf üretir ve seçilen masaüstünü
+        kaydeder. Böylece yeniden başlatmada hiroki-dm kullanıcıları karşılar.
+        """
+        c = plan.config
+        copied = []
+        for name in self._HIROKI_DM_BIN:
+            src = Path("/usr/bin") / name
+            if not src.is_file():
+                self.log(f"[hiroki-dm] canlı ortamda yok, atlanıyor: {name}")
+                continue
+            dst = self.target / "usr/bin" / name
+            shutil.copy2(src, dst)
+            os.chmod(dst, 0o755)
+            copied.append(name)
+        self.log("[hiroki-dm] hedefe kopyalanan araçlar: " + ", ".join(copied))
+
+        hiroki_etc = self.target / "etc" / "hiroki"
+        hiroki_etc.mkdir(parents=True, exist_ok=True)
+
+        conf_src = Path("/etc/systemd/system/hiroki-dm.service")
+        if conf_src.is_file():
+            (self.target / "etc" / "systemd" / "system").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(conf_src, self.target / "etc" / "systemd" / "system" / "hiroki-dm.service")
+
+        # Kurulu sisteme özel conf: karşılama ekranı göster (otomatik giriş kapalı)
+        (hiroki_etc / "hiroki-dm.conf").write_text(
+            "# Hiroki Display Manager (hiroki-dm) - kurulu sistem\n"
+            "# AUTO_LOGIN=yes -> acilista kullanici otomatik giris yapar\n"
+            "AUTO_LOGIN=no\n"
+            f"DEFAULT_USER={c.username}\n"
+            f"SESSION={c.de}\n"
+            "DISPLAY_NUM=:1\n"
+            "VT=1\n"
+            "KILL_TIMEOUT=40\n")
+        (hiroki_etc / "selected-de").write_text(c.de + "\n")
+
+    def _configure(self, plan: Plan):
+        self._verify_mounts(plan)
+        c = plan.config
+        fstab = self.runner.run(["genfstab", "-U", str(self.target)]).output
+        records = [line.split() for line in fstab.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        roots = [r for r in records if len(r) >= 4 and r[1] == "/"]
+        if len(roots) != 1 or roots[0][0].lower() != f"UUID={plan.root_fsuuid}".lower():
+            raise InstallerError("Üretilen fstab doğru kök UUID'sini içermiyor.")
+        root_fstype = self._blkid(self.root_node.path, "TYPE") or "ext4"
+        if roots[0][2] != root_fstype:
+            raise InstallerError(f"fstab dosya sistemi uyuşmazlığı: beklenen {root_fstype}, fstab'da {roots[0][2]}")
+        if plan.boot_mode == "uefi":
+            boot_uuid = self._blkid(self.boot_node.path, "UUID")
+            boots = [r for r in records if len(r) >= 4 and r[1] == "/boot/efi"]
+            if len(boots) != 1 or boots[0][0].lower() != f"UUID={boot_uuid}".lower():
+                raise InstallerError("fstab EFI UUID'si yanlış/eksik.")
+        self._write_target("etc/fstab", fstab)
+        self._write_target("etc/hostname", c.hostname + "\n")
+        self._write_target("etc/hosts", f"127.0.0.1 localhost\n::1 localhost\n127.0.1.1 {c.hostname}.localdomain {c.hostname}\n")
+        self._write_target("etc/locale.gen", "tr_TR.UTF-8 UTF-8\nen_US.UTF-8 UTF-8\n")
+        self._write_target("etc/locale.conf", f"LANG={c.locale}\n")
+        self._write_target("etc/vconsole.conf", f"KEYMAP={c.keyboard}\n")
+        xkb = "tr" if c.keyboard == "trq" else "us"
+        self._write_target("etc/X11/xorg.conf.d/00-keyboard.conf",
+                           f'Section "InputClass"\n Identifier "system-keyboard"\n MatchIsKeyboard "on"\n Option "XkbLayout" "{xkb}"\nEndSection\n')
+        self._chroot("ln", "-sfn", f"/usr/share/zoneinfo/{c.timezone}", "/etc/localtime")
+        self._chroot("locale-gen", stream=True)
+        # Sanal makinelerde fiziksel RTC bulunmayabilir. Bu tek adım açık uyarı ile opsiyoneldir.
+        try:
+            self._chroot("hwclock", "--systohc", timeout=30)
+        except CommandError as exc:
+            warning = "Donanım saati ayarlanamadı; ağ saat eşitlemesi etkinleştirilecek."
+            self.warnings.append(warning)
+            self.log(warning + "\n" + str(exc))
+        self._chroot("useradd", "-m", "-G", "wheel", "-s", "/bin/bash", "--", c.username)
+        self._chroot("chpasswd", input_text=f"{c.username}:{c.password}\n")
+        self._chroot("usermod", "--lock", "root")
+        self._write_target("etc/sudoers.d/10-hiroki-wheel", "%wheel ALL=(ALL:ALL) ALL\n", 0o440)
+        self._chroot("visudo", "-cf", "/etc/sudoers")
+        self._write_target("etc/systemd/zram-generator.conf", "[zram0]\nzram-size = min(ram / 2, 4096)\ncompression-algorithm = zstd\nswap-priority = 100\n")
+        # SDDM + KDE/LXQt session ayarla
+        self._chroot("systemctl", "enable", "NetworkManager.service", "systemd-timesyncd.service", "sddm.service", stream=True)
+        self._chroot("systemctl", "set-default", "graphical.target")
+        # SDDM otomatik giris
+        sddm_conf = self.target / "etc/sddm.conf.d"
+        sddm_conf.mkdir(parents=True, exist_ok=True)
+        session_map = {"kde": "plasma.desktop", "lxqt": "lxqt.desktop"}
+        session_file = session_map.get(c.de, "plasma.desktop")
+        (sddm_conf / "00-autologin.conf").write_text(
+            f"[Autologin]\nUser={c.username}\nSession={session_file}\n"
+        )
+        # Hiroki os-release
+        self._write_target("etc/os-release",
+            'NAME="Hiroki OS"\nPRETTY_NAME="Hiroki OS 1.0 Sakura"\n'
+            f'ID=hiroki\nID_LIKE=arch\nVERSION="1.0 Sakura"\n'
+            'HOME_URL="https://hiroki.os"\nBUG_REPORT_URL="https://hiroki.os/issues"\n'
+            'LOGO=linux\n'
+        )
+        if c.de == "openbox":
+            self._write_target("etc/skel/.config/openbox/autostart", "tint2 &\nnitrogen --restore &\npcmanfm --desktop &\n", 0o755)
+            # useradd daha önce çalıştığından mevcut kullanıcı evine de kopyala.
+            self._write_target(f"home/{c.username}/.config/openbox/autostart", "tint2 &\nnitrogen --restore &\npcmanfm --desktop &\n", 0o755)
+            self._chroot("chown", "-R", f"{c.username}:{c.username}", f"/home/{c.username}/.config")
+        # Arch lsb-release temizle
+        self._chroot("rm", "-f", "/etc/lsb-release")
+        self._write_target("etc/lsb-release", "DISTRIB_ID=Hiroki\nDISTRIB_RELEASE=1.0\nDISTRIB_CODENAME=Sakura\nDISTRIB_DESCRIPTION=Hiroki OS 1.0 Sakura\n")
+        self._write_target("etc/hiroki-installer-release", f"INSTALLER_VERSION={VERSION}\nBASE=hiroki\nDESKTOP={c.de}\n")
+        # Hiroki .dosyalarini kopyala
+        hiroki_apps = (
+            "hiroki-neofetch", "hiroki-welcome", "hiroki-theme",
+            "hiroki-wallpaper", "hiroki-tweaks", "hiroki-update",
+            "hiroki-driver", "hiroki-backup", "hiroki-partition", "hiroki-flatpak",
+            "hiroki-kde-setup", "hiroki-acbeni", "hiroki-snapshot",
+            "hiroki-boot-snapshot", "hiroki-pre-update-snapshot",
+        )
+        for f in hiroki_apps:
+            src = Path("/usr/bin") / f
+            if src.is_file():
+                shutil.copy2(src, self.target / "usr" / "bin" / f)
+                os.chmod(self.target / "usr" / "bin" / f, 0o755)
+        # .desktop dosyalarini kopyala
+        desktop_src = Path("/usr/share/applications")
+        desktop_dst = self.target / "usr" / "share" / "applications"
+        desktop_dst.mkdir(parents=True, exist_ok=True)
+        for f in desktop_src.glob("hiroki-*.desktop"):
+            shutil.copy2(f, desktop_dst / f.name)
+        hiroki_share = self.target / "usr" / "share" / "hiroki"
+        hiroki_share.mkdir(parents=True, exist_ok=True)
+        for f in ("hiroki-logo.png",):
+            src = Path("/usr/share/hiroki") / f
+            if src.is_file():
+                shutil.copy2(src, hiroki_share / f)
+        # Snapshot systemd dosyalari
+        systemd_dst = self.target / "etc" / "systemd" / "system"
+        systemd_dst.mkdir(parents=True, exist_ok=True)
+        for f in ("hiroki-boot-snapshot.service", "hiroki-boot-snapshot.timer"):
+            src = Path("/etc/systemd/system") / f
+            if src.is_file():
+                shutil.copy2(src, systemd_dst / f)
+        # Snapshot ayarlari
+        hiroki_etc = self.target / "etc" / "hiroki"
+        hiroki_etc.mkdir(parents=True, exist_ok=True)
+        settings_src = Path("/etc/hiroki/snapshot-settings.json")
+        if settings_src.is_file():
+            shutil.copy2(settings_src, hiroki_etc / "snapshot-settings.json")
+        # Bashrc kopyala
+        user_bashrc = self.target / f"home/{c.username}/.bashrc"
+        src_bashrc = Path("/etc/skel/.bashrc")
+        if src_bashrc.is_file():
+            shutil.copy2(src_bashrc, user_bashrc)
+        # KDE ayarlarini kopyala (plasmoid, config, wallpaper)
+        skel_local = Path("/etc/skel/.local")
+        user_local = self.target / f"home/{c.username}/.local"
+        if skel_local.is_dir():
+            shutil.copytree(skel_local, user_local, dirs_exist_ok=True)
+        skel_config = Path("/etc/skel/.config")
+        user_config = self.target / f"home/{c.username}/.config"
+        user_config.mkdir(parents=True, exist_ok=True)
+        kde_configs = (
+            "plasma-org.kde.plasma.desktop-appletsrc",
+            "plasmashellrc", "kwinrc", "kdeglobals",
+            "plasmarc", "plasma-localerc", "kglobalshortcutsrc",
+        )
+        for cfg in kde_configs:
+            src_cfg = skel_config / cfg
+            if src_cfg.is_file():
+                shutil.copy2(src_cfg, user_config / cfg)
+        # Wallpaper'i hedef sisteme kopyala
+        wp_src = Path("/usr/share/wallpapers")
+        wp_dst = self.target / "usr/share/wallpapers"
+        wp_dst.mkdir(parents=True, exist_ok=True)
+        for f in wp_src.glob("*.jpg"):
+            shutil.copy2(f, wp_dst / f.name)
+        self._chroot("chown", "-R", f"{c.username}:{c.username}", f"/home/{c.username}")
+        self._chroot("mkinitcpio", "-P", timeout=1800, stream=True)
+
+    def _bootloader(self, plan: Plan):
+        self._verify_mounts(plan)
+        config_path = self.target / "etc/default/grub"
+        text = config_path.read_text(encoding="utf-8")
+        text = re.sub(r"(?m)^\s*#?\s*GRUB_DISABLE_OS_PROBER=.*$", "", text)
+        text = re.sub(r"(?m)^\s*#?\s*GRUB_DISTRIBUTOR=.*$", "", text)
+        text += "\nGRUB_DISTRIBUTOR=\"Hiroki OS\"\n"
+        text += "GRUB_DISABLE_OS_PROBER=" + ("true" if plan.config.mode == "wipe" else "false") + "\n"
+        self._write_target("etc/default/grub", text)
+        if plan.boot_mode == "uefi":
+            destination = self.target / "boot/efi/EFI" / plan.bootloader_id
+            if destination.exists():
+                raise InstallerError("Yeni EFI dizini zaten mevcut. Başka işletim sisteminin dizini üzerine yazılmaz.")
+            self._chroot("grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi",
+                         f"--bootloader-id={plan.bootloader_id}", "--recheck", timeout=600, stream=True)
+            # --removable kullanılmaz: ortak EFI/BOOT/BOOTX64.EFI üzerine yazılmaz.
+            if not (destination / "grubx64.efi").is_file():
+                raise InstallerError("GRUB EFI yürütülebilir dosyası oluşturulamadı.")
+            entries = self.runner.run(["efibootmgr", "--verbose"], timeout=30).output
+            if plan.bootloader_id not in entries:
+                raise InstallerError("UEFI NVRAM açılış girdisi doğrulanamadı.")
+        else:
+            self._chroot("grub-install", "--target=i386-pc", "--recheck", plan.disk.path, timeout=600, stream=True)
+        self._chroot("grub-mkconfig", "-o", "/boot/grub/grub.cfg", timeout=600, stream=True)
+        self._chroot("grub-script-check", "/boot/grub/grub.cfg", timeout=120)
+        grub = self.target / "boot/grub/grub.cfg"
+        if grub.stat().st_size < 100 or "menuentry" not in grub.read_text(errors="replace"):
+            raise InstallerError("GRUB menüsü boş veya geçersiz.")
+        for path in ("boot/vmlinuz-linux", "boot/initramfs-linux.img", "etc/fstab"):
+            if not (self.target / path).is_file() or (self.target / path).stat().st_size == 0:
+                raise InstallerError(f"Gerekli kurulum dosyası eksik: {path}")
+        self._chroot("getent", "passwd", plan.config.username)
+        self._chroot("systemctl", "is-enabled", "NetworkManager.service", "sddm.service")
+
+    def _export_logs(self, plan: Plan):
+        self._verify_mounts(plan)
+        self._log_file.flush()
+        destination = self.target / "var/log/hiroki-installer" / self.session_id
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copytree(self.log_dir, destination)
+        os.chmod(destination, 0o700)
+        for p in destination.iterdir():
+            if p.is_file():
+                os.chmod(p, 0o600)
+
+    def cleanup(self) -> list[str]:
+        failures = []
+        if self.work:
+            # Ön kontrolden kalabilecek kendi RO ESP bağlaması da kapsanır.
+            for base in (self.target, self.work / "esp-check"):
+                if base is None:
+                    continue
+                try:
+                    self.runner.run(["sync"], timeout=None,
+                                    interruptible=False, ignore_cancel=True)
+                    import time; time.sleep(1)
+                    for mountpoint in self.inspector.mounts_under(base):
+                        self.runner.run(["umount", "-l", "--", mountpoint], timeout=None,
+                                        interruptible=False, ignore_cancel=True)
+                    if self.inspector.mount_at(base, ignore_cancel=True):
+                        self.runner.run(["umount", "-l", "--", str(base)], timeout=None,
+                                        interruptible=False, ignore_cancel=True)
+                except Exception as exc:
+                    failures.append(f"Temizleme hatası ({base}): {exc}")
+            if not failures:
+                for base in (self.target, self.work / "esp-check", self.work):
+                    if base:
+                        with contextlib.suppress(OSError):
+                            base.rmdir()  # ASLA rmtree: bağlı hedefin içeriğini silme riski yok.
+        return failures
+
+    def close(self):
+        if self._lock_file:
+            self._lock_file.close()
+            self._lock_file = None
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None
+
+    def abandon(self) -> list[str]:
+        errors = self.cleanup()
+        self.close()
+        self._prepared_plan = None
+        return errors
+
+    def install(self, plan: Plan, confirmation: str, acknowledged: bool) -> InstallResult:
+        if plan is not self._prepared_plan or self._install_started:
+            raise InstallerError("Yalnız bu oturumda hazırlanmış ve henüz kullanılmamış plan çalıştırılabilir.")
+        if not acknowledged or confirmation != plan.confirmation:
+            raise InstallerError("Yazılı hedef onayı/yedek kabulü eksik. Hiçbir disk işlemi yapılmadı.")
+        self._install_started = True
+        success = cancelled = False
+        message = ""
+        try:
+            self.status("1/8 — Son kimlik/kullanım kontrolü ve bölüm tablosu yedeği…", 0.17)
+            self._assert_fresh(plan)
+            self._backup(plan)
+            self.runner.check_cancel()
+            self.status("2/8 — Onaylanan bölüm planı uygulanıyor…", 0.20)
+            self._apply_layout(plan)
+            self.status("3/8 — Yalnız onaylanan yeni/hedef Linux bölümü biçimlendiriliyor…", 0.30)
+            self._format(plan)
+            self.status("4/8 — Oturuma özel hedef bağlanıyor ve doğrulanıyor…", 0.36)
+            self._mount(plan)
+            self._verify_mounts(plan)
+            # Partition modunda mevcut icerigi temizle
+            if plan.config.mode == "partition" and plan.root_existing:
+                self.log("Mevcut bolum icerigi temizleniyor...")
+                for item in self.target.iterdir():
+                    if item.name in ("lost+found",):
+                        continue
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+            self.status("5/8 — Arch Linux ve seçilen masaüstü kuruluyor…", 0.42)
+            pacman_conf = "/etc/hiroki-pacman.conf"
+            if os.path.exists(pacman_conf):
+                pacstrap_args = ["pacstrap", "-K", "-C", pacman_conf]
+            else:
+                pacstrap_args = ["pacstrap", "-K"]
+            self.runner.run([*pacstrap_args, str(self.target), *plan.packages], timeout=None, stream=True)
+            self.status("6/8 — fstab, kullanıcı, dil ve servisler yapılandırılıyor…", 0.76)
+            self._configure(plan)
+            self.status("7/8 — GRUB kuruluyor ve kurulum dosyaları doğrulanıyor…", 0.89)
+            self._bootloader(plan)
+            self.runner.check_cancel()
+            self.log("Çekirdek, initramfs, fstab, GRUB ve kullanıcı kontrolleri geçti.")
+            self._export_logs(plan)
+            self.status("8/8 — Veriler diske aktarılıyor ve bağlamalar ayrılıyor…", 0.97)
+            self.runner.run(["sync"], timeout=None, interruptible=False)
+            success = True
+            message = "Kurulum adımları ve son kontroller başarıyla tamamlandı."
+        except Cancelled as exc:
+            cancelled = True
+            message = str(exc)
+            self.log("İPTAL: " + message)
+        except Exception as exc:
+            message = self.runner.redact(str(exc))
+            self.log("HATA: " + message)
+            self.log(self.runner.redact(traceback.format_exc()))
+        finally:
+            errors = self.cleanup()
+            if errors:
+                success = False
+                message += "\n" + "\n".join(errors)
+                for e in errors:
+                    self.log(e)
+            if not success and self.modified:
+                message += "\nHedef diskte değişiklik yapıldı. Otomatik geri alma yok; kısmi kurulumu/bağlamaları incelemeden yeniden kurulum başlatmayın."
+            self.log(("BAŞARILI: " if success else "TAMAMLANMADI: ") + message)
+            self.emit("progress", 1.0 if success else 0.0)
+            self.close()
+            self._prepared_plan = None
+        return InstallResult(success, cancelled, message, str(self.log_dir or ""), self.modified, tuple(self.warnings))
+
+
+# GUI_IMPLEMENTATION
+
+
+# ============================================================================
+# GİRİŞ NOKTASI (CLI + PyQt6 GUI)  —  hiroki-installer'ı çalıştırılabilir yapar
+# ============================================================================
+
+def _config_from_json(engine, d):
+    """JSON dict'ten (güvenle) bir InstallConfig üretir."""
+    from pathlib import Path as _P
+    disk = d.get("disk", "")
+    if not disk:
+        raise InstallerError("config dosyasında 'disk' alanı zorunlu.")
+    node = engine.inspector.disk(disk)
+    ident = d.get("disk_identity") or list(node.identity)
+    return InstallConfig(
+        disk=disk,
+        disk_identity=tuple(ident),
+        mode=d.get("mode", "wipe"),
+        username=d.get("username", "hiroki"),
+        hostname=d.get("hostname", "hiroki-pc"),
+        password=d.get("password", ""),
+        de=d.get("de", "lxqt"),
+        root_partition=d.get("root_partition", ""),
+        boot_partition=d.get("boot_partition", ""),
+        root_size_gib=int(d.get("root_size_gib", 40)),
+        locale=d.get("locale", "tr_TR.UTF-8"),
+        timezone=d.get("timezone", "Europe/Istanbul"),
+        keyboard=d.get("keyboard", "trq"),
+    )
+
+
+def _config_schema_text():
+    return (
+        "JSON şeması (örnek — hedef disk yazılmadan güvenle kurulabilen plan modları):\n"
+        "{\n"
+        '  "disk": "/dev/sda",          //  hedef fiziksel disk (--list ile gör)\n'
+        '  "mode": "wipe",              //  wipe = diski tamamen sil ve kur\n'
+        '  "username": "hiroki",\n'
+        '  "hostname": "hiroki-pc",\n'
+        '  "password": "sifre12345",     //  en az 8 karakter\n'
+        '  "de": "lxqt",                 //  lxqt|openbox|xfce|kde|gnome|mate|cinnamon\n'
+        '  "root_size_gib": 40,          //  yeni Linux alanı (free modda 0 = tüm boş alan)\n'
+        '  "locale": "tr_TR.UTF-8",\n'
+        '  "timezone": "Europe/Istanbul",\n'
+        '  "keyboard": "trq"\n'
+        "}\n"
+    )
+
+
+def cli(argv):
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="hiroki-installer",
+        description="Hiroki OS Kurulum Aracı (Arch iso üzerinde, root ile çalışır).",
+    )
+    p.add_argument("--version", action="store_true", help="Sürümü göster ve çık.")
+    p.add_argument("--check", action="store_true", help="Ortam denetimi yap (zararsız).")
+    p.add_argument("--list", action="store_true", help="Fiziksel diskleri listele (zararsız).")
+    p.add_argument("--plan", metavar="CONFIG", help="Konfigürasyondan kurulum planı üret (hedef diske yazmaz).")
+    p.add_argument("--install", metavar="CONFIG", help="Konfigürasyondan kurulumu çalıştır.")
+    p.add_argument("--confirm", metavar="TEXT", help="--install için yazılı onay (plan.confirmation).")
+    p.add_argument("--config-schema", action="store_true", help="Örnek konfigürasyon JSON şemasını göster.")
+    p.add_argument("--gui", action="store_true", help="PyQt6 arayüzünü başlat.")
+    args = p.parse_args(argv)
+
+    if args.version:
+        print(f"Hiroki OS Installer {VERSION}")
+        return 0
+
+    if args.config_schema:
+        print(_config_schema_text())
+        return 0
+
+    if args.check:
+        problems = InstallerEngine.environment_problems()
+        if problems:
+            print("Ortam sorunları:")
+            for pr in problems:
+                print(" -", pr)
+            return 1
+        print("Ortam denetimi başarılı. Kurulum için uygun.")
+        return 0
+
+    if args.list:
+        engine = InstallerEngine()
+        try:
+            disks = engine.inspector.scan()
+        except InstallerError as exc:
+            print("Diskler listelenemedi:", exc)
+            return 1
+        if not disks:
+            print("Uygun fiziksel disk bulunamadı.")
+            return 1
+        for d in disks:
+            here = " — uygun" if not d.unavailable_reasons() else \
+                   " — " + ", ".join(d.unavailable_reasons())
+            print(f"{d.path:14s} {human_size(d.size):>10s}  {d.model or '-':28s} "
+                  f"{len(d.partitions)} bölüm{here}")
+        return 0
+
+    # --plan / --install
+    if args.plan or args.install:
+        cfg_arg = args.plan or args.install
+        try:
+            with open(cfg_arg, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print("Konfigürasyon okunamadı:", exc)
+            return 1
+
+        emit = lambda kind, payload: None  # sessiz CLI
+        engine = InstallerEngine(emit=emit)
+        try:
+            config = _config_from_json(engine, raw)
+            plan = engine.prepare(config)
+        except InstallerError as exc:
+            print("Ön kontrol hatası:", exc)
+            return 1
+
+        print(plan.summary())
+        print()
+        if not args.install:
+            print("Plan hazır — hedef diske henüz yazılmadı. --install ile gerçek kurulumu başlatın.")
+            return 0
+
+        # gerçek kurulum: yazılı onay gerektirir
+        confirmation = args.confirm
+        if not confirmation:
+            if sys.stdin.isatty():
+                confirmation = input("Onay yazın (%s): " % plan.confirmation).strip()
+            else:
+                print("--install için --confirm '%s' onayı zorunlu." % plan.confirmation)
+                return 1
+        if confirmation != plan.confirmation:
+            print("Onay eşleşmiyor. Hiçbir disk işlemi yapılmadı.")
+            return 1
+
+        result = engine.install(plan, confirmation, True)
+        print("=" * 60)
+        print("KURULUM", "BAŞARILI" if result.success else "TAMAMLANMADI")
+        print(result.message)
+        print("Log dizini:", result.log_dir)
+        if result.warnings:
+            print("Uyarılar:")
+            for w in result.warnings:
+                print(" -", w)
+        return 0 if result.success else 1
+
+    if args.gui or len(sys.argv) == 1:
+        return gui()
+
+    p.print_help()
+    return 2
+
+
+# ============================================================================
+# PyQt6 MASAÜSTÜ ARAYÜZÜ
+# ============================================================================
+
+def gui():
+    """PyQt6 masaüstü arayüzü. PyQt6 kurulamazsa komut satırı yönlendirmesi verir."""
+    try:
+        from PyQt6.QtWidgets import (
+            QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+            QGridLayout, QLabel, QLineEdit, QComboBox, QPushButton, QTextEdit,
+            QProgressBar, QDoubleSpinBox, QGroupBox, QSplitter, QMessageBox,
+        )
+        from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+        from PyQt6.QtGui import QFont, QColor, QPalette, QTextCursor
+    except Exception as exc:
+        print("PyQt6 arayüzü başlatılamadı:", exc)
+        print("CLI kullanın:  sudo -E python3 hiroki-installer --help")
+        return 1
+
+    class Worker(QThread):
+        """Arka plan iş parçacığı — plan oluşturma ve kurulum."""
+        log_signal = pyqtSignal(str)
+        status_signal = pyqtSignal(str)
+        progress_signal = pyqtSignal(float)
+        finished_signal = pyqtSignal(object)
+        error_signal = pyqtSignal(str)
+
+        def __init__(self, task, *args):
+            super().__init__()
+            self.task = task
+            self.args = args
+            self.result = None
+            self.error = None
+
+        def run(self):
+            def emit(kind, payload):
+                if kind == "log":
+                    self.log_signal.emit(str(payload))
+                elif kind == "status":
+                    self.status_signal.emit(str(payload))
+                elif kind == "progress":
+                    self.progress_signal.emit(float(payload))
+
+            try:
+                if self.task == "plan":
+                    config, _ = self.args
+                    engine = InstallerEngine(emit=emit)
+                    plan = engine.prepare(config)
+                    self.result = (plan, engine)
+                elif self.task == "install":
+                    engine, plan = self.args
+                    result = engine.install(plan, plan.confirmation, True)
+                    self.result = result
+                elif self.task == "disks":
+                    engine = InstallerEngine(emit=emit)
+                    disks = engine.inspector.scan()
+                    self.result = (engine, disks)
+            except Exception as exc:
+                self.error = str(exc)
+
+            if self.error:
+                self.error_signal.emit(self.error)
+            else:
+                self.finished_signal.emit(self.result)
+
+        def get_result(self):
+            if self.error:
+                raise InstallerError(self.error)
+            return self.result
+
+    class HirokiInstallerWindow(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("Hiroki OS Kurulum Aracı")
+            self.setFixedSize(920, 740)
+            self.engine = None
+            self.plan = None
+            self.busy = False
+            self.disks = []
+            self.selected_disk = None
+            self.worker = None
+            self._cancelled = False
+            self._build_ui()
+            self._refresh_disks()
+
+        def _build_ui(self):
+            central = QWidget()
+            self.setCentralWidget(central)
+            layout = QVBoxLayout(central)
+            layout.setSpacing(8)
+
+            # Başlık
+            title = QLabel("🌸 Hiroki OS Kurulum Aracı")
+            title.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title.setStyleSheet("color: #2D1B69; padding: 4px;")
+            layout.addWidget(title)
+
+            sub = QLabel("Adım 1: disk ve ayarlar — Adım 2: plan — Adım 3: onayla ve kur")
+            sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            sub.setStyleSheet("color: #A0A0B8;")
+            layout.addWidget(sub)
+
+            # Ayarlar grubu
+            settings = QGroupBox("Kurulum Ayarları")
+            grid = QGridLayout()
+            grid.setSpacing(8)
+
+            row = 0
+            grid.addWidget(QLabel("Hedef disk:"), row, 0)
+            self.disk_combo = QComboBox()
+            self.disk_combo.currentIndexChanged.connect(self._on_disk_changed)
+            grid.addWidget(self.disk_combo, row, 1, 1, 2)
+            self.btn_scan = QPushButton("Yeniden Tara")
+            self.btn_scan.clicked.connect(self._refresh_disks)
+            grid.addWidget(self.btn_scan, row, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Kurulum modu:"), row, 0)
+            self.mode_combo = QComboBox()
+            for key, desc in MODES.items():
+                self.mode_combo.addItem(f"{key} — {desc}", key)
+            self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+            grid.addWidget(self.mode_combo, row, 1, 1, 3)
+
+            row += 1
+            self.boot_part_label = QLabel("Boot bölümü (EFI):")
+            grid.addWidget(self.boot_part_label, row, 0)
+            self.boot_part_combo = QComboBox()
+            grid.addWidget(self.boot_part_combo, row, 1, 1, 3)
+            self.boot_part_label.hide()
+            self.boot_part_combo.hide()
+
+            row += 1
+            self.root_part_label = QLabel("Root bölümü:")
+            grid.addWidget(self.root_part_label, row, 0)
+            self.root_part_combo = QComboBox()
+            grid.addWidget(self.root_part_combo, row, 1, 1, 3)
+            self.root_part_label.hide()
+            self.root_part_combo.hide()
+
+            row += 1
+            grid.addWidget(QLabel("Masaüstü:"), row, 0)
+            self.de_combo = QComboBox()
+            for key, info in DES.items():
+                self.de_combo.addItem(f"{info['name']} ({key})", key)
+            grid.addWidget(self.de_combo, row, 1, 1, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Kullanıcı adı:"), row, 0)
+            self.username = QLineEdit("hiroki")
+            grid.addWidget(self.username, row, 1, 1, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Bilgisayar adı:"), row, 0)
+            self.hostname = QLineEdit("hiroki-pc")
+            grid.addWidget(self.hostname, row, 1, 1, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Parola (≥8):"), row, 0)
+            self.password = QLineEdit()
+            self.password.setEchoMode(QLineEdit.EchoMode.Password)
+            grid.addWidget(self.password, row, 1, 1, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Yeni Linux alanı (GiB):"), row, 0)
+            self.root_size = QDoubleSpinBox()
+            self.root_size.setRange(0, 2048)
+            self.root_size.setDecimals(0)
+            self.root_size.setValue(40)
+            grid.addWidget(self.root_size, row, 1, 1, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Dil:"), row, 0)
+            self.locale_combo = QComboBox()
+            self.locale_combo.addItem("tr_TR.UTF-8", "tr_TR.UTF-8")
+            self.locale_combo.addItem("en_US.UTF-8", "en_US.UTF-8")
+            grid.addWidget(self.locale_combo, row, 1)
+
+            grid.addWidget(QLabel("Saat dilimi:"), row, 2)
+            self.tz_combo = QComboBox()
+            self.tz_combo.addItem("Europe/Istanbul", "Europe/Istanbul")
+            self.tz_combo.addItem("UTC", "UTC")
+            grid.addWidget(self.tz_combo, row, 3)
+
+            row += 1
+            grid.addWidget(QLabel("Klavye:"), row, 0)
+            self.kb_combo = QComboBox()
+            self.kb_combo.addItem("trq", "trq")
+            self.kb_combo.addItem("us", "us")
+            grid.addWidget(self.kb_combo, row, 1)
+
+            settings.setLayout(grid)
+            layout.addWidget(settings)
+
+            # Durum + ilerleme
+            self.status_label = QLabel("Başlatılıyor...")
+            self.status_label.setStyleSheet("color: #333; font-weight: bold;")
+            layout.addWidget(self.status_label)
+
+            self.progress = QProgressBar()
+            self.progress.setValue(0)
+            layout.addWidget(self.progress)
+
+            # Onay alanı
+            confirm_box = QGroupBox("Yazılı Onay")
+            confirm_layout = QVBoxLayout()
+            hint = QLabel('Onay metni: plan girişinde gösterilen kelime — örn. "SIL /dev/sda"')
+            hint.setStyleSheet("color: #A0A0B8;")
+            confirm_layout.addWidget(hint)
+            self.confirm = QLineEdit()
+            self.confirm.setPlaceholderText("Onayı buraya yazın")
+            confirm_layout.addWidget(self.confirm)
+            confirm_box.setLayout(confirm_layout)
+            layout.addWidget(confirm_box)
+
+            # Butonlar
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+            self.btn_plan = QPushButton("Ön Kontrol + Plan Oluştur")
+            self.btn_plan.clicked.connect(self._on_plan)
+            btn_row.addWidget(self.btn_plan)
+            self.btn_install = QPushButton("KUR")
+            self.btn_install.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 6px 16px; }")
+            self.btn_install.clicked.connect(self._on_install)
+            btn_row.addWidget(self.btn_install)
+            self.btn_cancel = QPushButton("İPTAL")
+            self.btn_cancel.setStyleSheet("QPushButton { background-color: #f44336; color: white; padding: 6px 16px; }")
+            self.btn_cancel.clicked.connect(self._on_cancel)
+            self.btn_cancel.setEnabled(False)
+            btn_row.addWidget(self.btn_cancel)
+            layout.addLayout(btn_row)
+
+            # Log görünümü
+            log_box = QGroupBox("Kurulum Günlüğü")
+            log_layout = QVBoxLayout()
+            self.log_text = QTextEdit()
+            self.log_text.setReadOnly(True)
+            self.log_text.setFont(QFont("Monospace", 9))
+            self.log_text.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4;")
+            log_layout.addWidget(self.log_text)
+            log_box.setLayout(log_layout)
+            layout.addWidget(log_box, stretch=1)
+
+            # Stil
+            self.setStyleSheet("""
+                QMainWindow { background-color: #f5f5f5; }
+                QGroupBox { font-weight: bold; border: 1px solid #ccc; border-radius: 4px; margin-top: 8px; padding-top: 16px; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 6px; }
+                QPushButton { padding: 4px 12px; border: 1px solid #999; border-radius: 3px; }
+                QPushButton:hover { background-color: #e0e0e0; }
+                QPushButton:disabled { color: #999; }
+                QLineEdit, QComboBox, QDoubleSpinBox { padding: 3px; border: 1px solid #ccc; border-radius: 3px; }
+            """)
+
+        def _set_busy(self, busy):
+            self.busy = busy
+            self.btn_plan.setEnabled(not busy)
+            self.btn_install.setEnabled(not busy)
+            self.btn_scan.setEnabled(not busy)
+            self.disk_combo.setEnabled(not busy)
+            self.mode_combo.setEnabled(not busy)
+            self.de_combo.setEnabled(not busy)
+            self.username.setEnabled(not busy)
+            self.hostname.setEnabled(not busy)
+            self.password.setEnabled(not busy)
+            self.root_size.setEnabled(not busy)
+            self.locale_combo.setEnabled(not busy)
+            self.tz_combo.setEnabled(not busy)
+            self.kb_combo.setEnabled(not busy)
+            self.btn_cancel.setEnabled(busy)
+            if busy:
+                self.status_label.setText("Çalışıyor...")
+
+        def _append_log(self, text):
+            self.log_text.append(text)
+            self.log_text.moveCursor(QTextCursor.MoveOperation.End)
+
+        def _current_config(self):
+            disk_id = self.disk_combo.currentData()
+            mode = self.mode_combo.currentData() or "wipe"
+            root_part = ""
+            boot_part = ""
+            if mode == "partition":
+                root_part = self.root_part_combo.currentData() or ""
+                boot_part = self.boot_part_combo.currentData() or ""
+            return InstallConfig(
+                disk=disk_id or "",
+                disk_identity=self.selected_disk.identity if self.selected_disk else (),
+                mode=mode,
+                username=self.username.text().strip(),
+                hostname=self.hostname.text().strip(),
+                password=self.password.text(),
+                de=self.de_combo.currentData() or "kde",
+                root_partition=root_part,
+                boot_partition=boot_part,
+                root_size_gib=int(self.root_size.value()),
+                locale=self.locale_combo.currentData() or "tr_TR.UTF-8",
+                timezone=self.tz_combo.currentData() or "Europe/Istanbul",
+                keyboard=self.kb_combo.currentData() or "trq",
+            )
+
+        def _refresh_disks(self):
+            self._set_busy(True)
+            self.status_label.setText("Diskler taranıyor...")
+            self.worker = Worker("disks")
+            self.worker.finished_signal.connect(self._on_disks_done)
+            self.worker.error_signal.connect(self._on_disks_error)
+            self.worker.start()
+
+        @pyqtSlot(object)
+        def _on_disks_done(self, result):
+            engine, disks = result
+            self.engine = engine
+            self.disks = disks
+            self.disk_combo.clear()
+            for d in disks:
+                self.disk_combo.addItem(f"{d.path} — {human_size(d.size)} — {d.model or '-'}", d.path)
+            self.selected_disk = disks[0] if disks else None
+            self._set_busy(False)
+            self.status_label.setText("Disk seçildi: " + (disks[0].path if disks else "yok"))
+
+        @pyqtSlot(str)
+        def _on_disks_error(self, msg):
+            self._set_busy(False)
+            self.status_label.setText("Diskler okunamadı: " + msg)
+
+        def _on_disk_changed(self, index):
+            path = self.disk_combo.currentData()
+            if not path:
+                self.selected_disk = None
+                return
+            for d in self.disks:
+                if d.path == path:
+                    self.selected_disk = d
+                    break
+            self._populate_partitions()
+
+        def _on_mode_changed(self, index):
+            mode = self.mode_combo.currentData()
+            show_parts = mode == "partition"
+            self.boot_part_label.setVisible(show_parts)
+            self.boot_part_combo.setVisible(show_parts)
+            self.root_part_label.setVisible(show_parts)
+            self.root_part_combo.setVisible(show_parts)
+
+        def _populate_partitions(self):
+            self.boot_part_combo.clear()
+            self.root_part_combo.clear()
+            if not self.selected_disk:
+                return
+            boot_mode = "uefi" if Path("/sys/firmware/efi").is_dir() else "bios"
+            for p in self.selected_disk.partitions:
+                size_bytes = p.size
+                label = f"{p.path} — {human_size(size_bytes)} — {p.fstype or 'bos'}"
+                is_fat = p.fstype in ("vfat", "fat32", "fat16")
+                is_boot_sized = size_bytes >= 32 * MIB
+                if boot_mode == "uefi":
+                    if is_fat and is_boot_sized:
+                        self.boot_part_combo.addItem(label, p.path)
+                else:
+                    if is_fat or (p.fstype == "" and is_boot_sized):
+                        self.boot_part_combo.addItem(label, p.path)
+                if p.fstype in ("ext4", "btrfs", "xfs", "ntfs", ""):
+                    self.root_part_combo.addItem(label, p.path)
+
+        def _on_plan(self):
+            if self.busy:
+                return
+            cfg = self._current_config()
+            self._set_busy(True)
+            self.status_label.setText("Ön kontrol ve plan oluşturuluyor...")
+            self.worker = Worker("plan", cfg, None)
+            self.worker.log_signal.connect(self._append_log)
+            self.worker.status_signal.connect(lambda t: self.status_label.setText(t))
+            self.worker.progress_signal.connect(lambda v: self.progress.setValue(int(v * 100)))
+            self.worker.finished_signal.connect(self._on_plan_done)
+            self.worker.error_signal.connect(self._on_plan_error)
+            self.worker.start()
+
+        @pyqtSlot(object)
+        def _on_plan_done(self, result):
+            plan, engine = result
+            self.plan = plan
+            self.engine = engine
+            self._set_busy(False)
+            self._append_log("=" * 50)
+            self._append_log(plan.summary())
+            self._append_log("=" * 50)
+            self.confirm.setPlaceholderText(plan.confirmation)
+            self.status_label.setText("Plan hazır. Onayı yazıp KUR'a basın.")
+            self.progress.setValue(15)
+
+        @pyqtSlot(str)
+        def _on_plan_error(self, msg):
+            self._set_busy(False)
+            self._append_log("PLAN HATASI: " + msg)
+            self.status_label.setText("Plan oluşturulamadı — loga bakın.")
+
+        def _on_install(self):
+            if self.busy:
+                return
+            if not self.plan:
+                self.status_label.setText("Önce 'Ön Kontrol + Plan Oluştur' çalıştırın.")
+                return
+            typed = self.confirm.text().strip()
+            if typed != self.plan.confirmation:
+                self.status_label.setText("Onay eşleşmiyor. Yazılı onay: '%s'" % self.plan.confirmation)
+                return
+            self._set_busy(True)
+            self._cancelled = False
+            self.status_label.setText("Kurulum başlatılıyor...")
+            self.worker = Worker("install", self.engine, self.plan)
+            self.worker.log_signal.connect(self._append_log)
+            self.worker.status_signal.connect(lambda t: self.status_label.setText(t))
+            self.worker.progress_signal.connect(lambda v: self.progress.setValue(int(v * 100)))
+            self.worker.finished_signal.connect(self._on_install_done)
+            self.worker.error_signal.connect(self._on_install_error)
+            self.worker.start()
+
+        @pyqtSlot(object)
+        def _on_install_done(self, result):
+            self._set_busy(False)
+            self._append_log("=" * 50)
+            self._append_log("KURULUM " + ("BAŞARILI" if result.success else "TAMAMLANMADI"))
+            self._append_log(result.message)
+            self._append_log("Log dizini: " + result.log_dir)
+            self.status_label.setText("Kurulum " + ("tamamlandı." if result.success else "sonlandı."))
+            self.progress.setValue(100 if result.success else 0)
+            if result.warnings:
+                for w in result.warnings:
+                    self._append_log("Uyarı: " + w)
+            if result.success:
+                QMessageBox.information(self, "Kurulum Başarılı",
+                    "Kurulum başarıyla tamamlandı!\n\n" + result.message)
+
+        @pyqtSlot(str)
+        def _on_install_error(self, msg):
+            self._set_busy(False)
+            self._append_log("KURULUM HATASI: " + msg)
+            self.status_label.setText("Kurulum hatası — loga bakın.")
+            QMessageBox.critical(self, "Kurulum Hatası", "Kurulum hatası oluştu:\n\n" + msg)
+
+        def _on_cancel(self):
+            if self.worker and self.worker.isRunning():
+                self._cancelled = True
+                if self.engine:
+                    self.engine.cancel.set()
+                self.status_label.setText("İptal ediliyor...")
+                self.btn_cancel.setEnabled(False)
+
+        def closeEvent(self, event):
+            if self.worker and self.worker.isRunning():
+                reply = QMessageBox.question(self, "Kurulum Devam Ediyor",
+                    "Kurulum devam ediyor. Pencereyi kapatmak istediğinizden emin misiniz?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
+                    event.ignore()
+                    return
+                if self.engine:
+                    self.engine.cancel.set()
+                self.worker.wait(5000)
+            event.accept()
+
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = HirokiInstallerWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(cli(sys.argv[1:]))

@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hiroki OS</title>
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #0a0a0a;
+    color: #e0e0e0;
+    line-height: 1.7;
+}
+
+/* ─── NAVBAR ─── */
+.navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: #111111;
+    border-bottom: 1px solid #2a2a2a;
+    z-index: 1000;
+    padding: 16px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.navbar .logo {
+    font-size: 22px;
+    font-weight: 800;
+    color: #d34188;
+    letter-spacing: 2px;
+}
+
+.navbar .logo span {
+    color: #e0e0e0;
+    font-weight: 400;
+}
+
+.navbar nav a {
+    color: #888;
+    text-decoration: none;
+    margin-left: 32px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: color 0.3s;
+    position: relative;
+}
+
+.navbar nav a::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: #d34188;
+    transition: width 0.3s;
+}
+
+.navbar nav a:hover {
+    color: #d34188;
+}
+
+.navbar nav a:hover::after {
+    width: 100%;
+}
+
+/* ─── HERO ─── */
+.hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 120px 20px 80px;
+    background: linear-gradient(180deg, #0a0a0a 0%, #110a14 50%, #0a0a0a 100%);
+}
+
+.hero h1 {
+    font-size: 64px;
+    font-weight: 900;
+    color: #d34188;
+    letter-spacing: 4px;
+    margin-bottom: 16px;
+}
+
+.hero .subtitle {
+    font-size: 20px;
+    color: #888;
+    margin-bottom: 40px;
+    max-width: 600px;
+}
+
+.hero .ascii-art {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #d34188;
+    line-height: 1.2;
+    margin-bottom: 40px;
+    white-space: pre;
+    opacity: 0.7;
+}
+
+/* ─── BUTTONS ─── */
+.btn-group {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.btn {
+    display: inline-block;
+    padding: 14px 36px;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    border: 2px solid transparent;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.4s ease;
+    z-index: 1;
+}
+
+.btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: #d34188;
+    transform: translate(-50%, -50%);
+    transition: width 0.4s ease, height 0.4s ease;
+    z-index: -1;
+}
+
+.btn:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.btn:hover {
+    color: #fff;
+    border-color: #d34188;
+}
+
+.btn-primary {
+    background: #d34188;
+    color: #fff;
+}
+
+.btn-primary::before {
+    background: #b83070;
+}
+
+.btn-secondary {
+    background: transparent;
+    color: #d34188;
+    border-color: #d34188;
+}
+
+.btn-secondary::before {
+    background: rgba(211, 65, 136, 0.15);
+}
+
+.btn-outline {
+    background: transparent;
+    color: #888;
+    border-color: #333;
+}
+
+.btn-outline::before {
+    background: rgba(211, 65, 136, 0.1);
+}
+
+.btn-outline:hover {
+    color: #d34188;
+    border-color: #d34188;
+}
+
+/* ─── SECTIONS ─── */
+section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 100px 24px;
+}
+
+.section-title {
+    font-size: 36px;
+    font-weight: 800;
+    color: #d34188;
+    margin-bottom: 12px;
+}
+
+.section-subtitle {
+    font-size: 16px;
+    color: #666;
+    margin-bottom: 48px;
+}
+
+/* ─── AMAC ─── */
+.amac-card {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    padding: 40px;
+    margin-bottom: 24px;
+}
+
+.amac-card h3 {
+    font-size: 20px;
+    color: #d34188;
+    margin-bottom: 16px;
+}
+
+.amac-card p {
+    color: #aaa;
+    font-size: 15px;
+    line-height: 1.8;
+}
+
+.amac-card .highlight {
+    color: #d34188;
+    font-weight: 700;
+}
+
+/* ─── OZELLIKLER ─── */
+.ozellik-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.ozellik-card {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    padding: 32px;
+    transition: border-color 0.3s, background 0.3s;
+}
+
+.ozellik-card:hover {
+    border-color: #d34188;
+    background: #141014;
+}
+
+.ozellik-card .icon {
+    font-size: 28px;
+    margin-bottom: 16px;
+    display: block;
+}
+
+.ozellik-card h3 {
+    font-size: 17px;
+    color: #e0e0e0;
+    margin-bottom: 10px;
+}
+
+.ozellik-card p {
+    font-size: 13px;
+    color: #777;
+    line-height: 1.7;
+}
+
+/* ─── UYGULAMALAR ─── */
+.app-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.app-item {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    padding: 24px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    transition: border-color 0.3s;
+}
+
+.app-item:hover {
+    border-color: #d34188;
+}
+
+.app-item .app-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.app-item h4 {
+    font-size: 14px;
+    color: #e0e0e0;
+    margin-bottom: 4px;
+}
+
+.app-item p {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.6;
+}
+
+/* ─── KARSILASTIRMA ─── */
+.karsilastirma-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #111;
+    border: 1px solid #2a2a2a;
+}
+
+.karsilastirma-table th {
+    background: #1a1a1a;
+    color: #d34188;
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 13px;
+    border-bottom: 2px solid #d34188;
+}
+
+.karsilastirma-table td {
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #aaa;
+    border-bottom: 1px solid #1e1e1e;
+}
+
+.karsilastirma-table tr:hover td {
+    background: #141014;
+}
+
+.karsilastirma-table .check {
+    color: #4caf50;
+}
+
+.karsilastirma-table .cross {
+    color: #555;
+}
+
+.karsilastirma-table .partial {
+    color: #ff9800;
+}
+
+/* ─── INDIRME ─── */
+.indirme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+}
+
+.indirme-card {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    padding: 28px;
+    text-align: center;
+    transition: border-color 0.3s;
+}
+
+.indirme-card:hover {
+    border-color: #d34188;
+}
+
+.indirme-card .tool-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+    display: block;
+}
+
+.indirme-card h4 {
+    font-size: 16px;
+    color: #e0e0e0;
+    margin-bottom: 8px;
+}
+
+.indirme-card p {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 16px;
+}
+
+/* ─── FOOTER ─── */
+footer {
+    border-top: 1px solid #1e1e1e;
+    padding: 40px 24px;
+    text-align: center;
+    color: #444;
+    font-size: 13px;
+}
+
+footer a {
+    color: #d34188;
+    text-decoration: none;
+}
+
+/* ─── SCROLLBAR ─── */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #d34188;
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 768px) {
+    .hero h1 {
+        font-size: 36px;
+    }
+
+    .navbar {
+        padding: 12px 16px;
+    }
+
+    .navbar nav a {
+        margin-left: 16px;
+        font-size: 12px;
+    }
+
+    section {
+        padding: 60px 16px;
+    }
+
+    .karsilastirma-table {
+        font-size: 11px;
+    }
+
+    .karsilastirma-table th,
+    .karsilastirma-table td {
+        padding: 8px 6px;
+    }
+}
+</style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<div class="navbar">
+    <div class="logo">HIROKI<span>OS</span></div>
+    <nav>
+        <a href="#amac">Amac</a>
+        <a href="#ozellikler">Ozellikler</a>
+        <a href="#uygulamalar">Uygulamalar</a>
+        <a href="#karsilastirma">Karsilastirma</a>
+        <a href="#indir">Indir</a>
+    </nav>
+</div>
+
+<!-- HERO -->
+<div class="hero">
+    <div class="ascii-art">
+    .躬  .  .   .   .   .  . .   .
+   .   .  _|_  _|_  _|_  .  .  .   .
+  . . . /   \/   \/   \  . .  . . .
+ .   . |  H  I  R  O  K  I   .   .
+  . . . \___/\___/\___/  . .  . . .
+   .   .   .   .   .   .   .   .
+    </div>
+    <h1>HIROKI OS</h1>
+    <p class="subtitle">Arch Linux uzerine insa edilmis, tamamen Turkiye'den yukselen bir isletim sistemi. 8 aylik gelistirme sureci, binlerce dosya ve sizi bekleyen ozel bir deneyim.</p>
+    <div class="btn-group">
+        <a href="#indir" class="btn btn-primary">Indir</a>
+        <a href="#amac" class="btn btn-secondary">Neden Hiroki?</a>
+        <a href="https://github.com" class="btn btn-outline" target="_blank">GitHub</a>
+    </div>
+</div>
+
+<!-- AMAC -->
+<section id="amac">
+    <h2 class="section-title">Bu Isletim Sisteminin Amaci</h2>
+    <p class="section-subtitle">Basit bir Arch kurulumu degil, gercek bir proje.</p>
+
+    <div class="amac-card">
+        <h3>Yolculugumuz</h3>
+        <p>
+            <span class="highlight">Hiroki OS</span>, 8 ay suren intensif bir gelistirme surecinin urunudur.
+            Icinde <span class="highlight">binlerce dosya</span>, ozel uygulamalar, kendi installer'i,
+            kendi snapshot yoneticisi ve tamamen elle yapisal正玩 bir sistemdir.
+        </p>
+    </div>
+
+    <div class="amac-card">
+        <h3>Neden Var?</h3>
+        <p>
+            Linux dunyasi buyuk bir ekosistem sunuyor, ama cogu dagitima baktiginizda
+            ayni paketleri, ayni tool'lari ve ayni deneyimi gorursunuz.
+            <span class="highlight">Hiroki OS</span>, farkli olmak icin yola cikti.
+            Arch'in gucunu, kendi ozgun arayuzuyle ve kullanici deneyimiyle birlestirdik.
+        </p>
+    </div>
+
+    <div class="amac-card">
+        <h3>Desteginize Ihtiyacimiz Var</h3>
+        <p>
+            Ilk surumumuz size basit gelebilir. Bu normal.
+            Ama unutmayin: her buyuk proje kucuk adimlarla baslar.
+            <span class="highlight">Sizin desteiginiz</span> ile Hiroki OS'i cok daha kaliteli
+            bir projeye cevirebiliriz. Insanlarin sistemi denemesi ve yorumlarini birakmasi
+            bizim icin cok onemli. Sonucta bu sistemi <span class="highlight">siz kullanacaksiniz</span>
+            ve en iyisine layiksiniz.
+        </p>
+    </div>
+</section>
+
+<!-- OZELLIKLER -->
+<section id="ozellikler">
+    <h2 class="section-title">Ozellikler</h2>
+    <p class="section-subtitle">Hiroki OS'i digerlerinden ayiran detaylar.</p>
+
+    <div class="ozellik-grid">
+        <div class="ozellik-card">
+            <span class="icon">&#128736;</span>
+            <h3>Ozel Installer</h3>
+            <p>Sifirdan yazilmis, PyQt6 tabanli kurulum araci. Btrfs, ext4, xfs ve ntfs destegi.
+               Kullanicinin her adiminda bilgilendirme yapar.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128190;</span>
+            <h3>Snapshot Yoneticisi</h3>
+            <p>Timeshift tabanli, GUI ile yonetilen anlik goruntu sistemi.
+               Guncelleme oncesi otomatik snapshot alma ve 90 saniye sonra otomatik snapshot.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128260;</span>
+            <h3>Akilli Guncelleme</h3>
+            <p>Terminal ciktisi gosteren, Evet/Hayır soran guncelleme merkezi.
+               Guncelleme oncesi snapshot alarak guvenli guncelleme saglar.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#127912;</span>
+            <h3>KDE Plasma Masaustu</h3>
+            <p>Modern ve ozellestirilebilir KDE Plasma 6 masaustu.
+               Breeze tema, Konsole, Dolphin, Kate ve daha fazlasi onceden yuklu.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128295;</span>
+            <h3>Driver Yoneticisi</h3>
+            <p>Otomatik donanim tespiti ve surucu kurulumu.
+               NVIDIA, AMD, Intel ve VirtualBox icin otomatik surucu destegi.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128640;</span>
+            <h3>Flatpak Desteği</h3>
+            <p>Flatpak ile sinirsiz uygulama erisimi. Tek tikla binlerce uygulamayi kurun.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128737;</span>
+            <h3>Kisisellestirme Araci</h3>
+            <p>Tema, renk, duvar kagidi ve daha fazlasi. Tum ayarlari tek bir uygulamadan yonetin.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#128274;</span>
+            <h3>Guvenlik</h3>
+            <p>UFW ve Firewalld ile cift katmanli guvenlik. Guvenlik duvari ayarlari GUI ile yonetilir.</p>
+        </div>
+        <div class="ozellik-card">
+            <span class="icon">&#9889;</span>
+            <h3>Performans</h3>
+            <p>Arch Linux altyapisi ile maksimum performans. Minimal kurulum, hizli calisma.</p>
+        </div>
+    </div>
+</section>
+
+<!-- UYGULAMALAR -->
+<section id="uygulamalar">
+    <h2 class="section-title">On Yuklu Uygulamalar</h2>
+    <p class="section-subtitle">Hiroki OS ile birlikte gelen ozel ve standart uygulamalar.</p>
+
+    <div class="app-list">
+        <div class="app-item">
+            <div class="app-icon">&#128464;</div>
+            <div>
+                <h4>Hiroki Installer</h4>
+                <p>Sifirdan yazilmis kurulum araci. Partition, dual-boot ve full kurulum destegi.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128190;</div>
+            <div>
+                <h4>Hiroki Snapshot</h4>
+                <p>Timeshift tabanli snapshot yoneticisi. GUI ile kolay geri yukleme ve olusturma.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128260;</div>
+            <div>
+                <h4>Hiroki Update</h4>
+                <p>Akilli guncelleme merkezi. Terminal ciktisi, snapshot entegrasyonu.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#127912;</div>
+            <div>
+                <h4>Hiroki Theme Manager</h4>
+                <p>Tema, renk ve duvar kagidi yonetimi. Tek uygulamada kisisellestirme.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128295;</div>
+            <div>
+                <h4>Hiroki Driver Manager</h4>
+                <p>Otomatik donanim tespiti ve surucu kurulumu. NVIDIA, AMD, Intel.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128187;</div>
+            <div>
+                <h4>Hiroki Welcome</h4>
+                <p>Ilk acilis karsilama ekrani. Sistem hakkinda bilgi ve baslangic rehberi.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#127752;</div>
+            <div>
+                <h4>Hiroki Wallpaper</h4>
+                <p>Ozel duvar kagitlari koleksiyonu. Sakura temali estetik arka planlar.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128231;</div>
+            <div>
+                <h4>Hiroki Backup</h4>
+                <p>Veri yedekleme araci. Kolay yedekleme ve geri yukleme islemleri.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128170;</div>
+            <div>
+                <h4>Hiroki Partition</h4>
+                <p>Disk bolutleme araci. Grafik arayuz ile kolay bolme ve bicimlendirme.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#127419;&#127482;</div>
+            <div>
+                <h4>Konsole & Dolphin</h4>
+                <p>KDE'nin gucllu terminal ve dosya yoneticisi. Onceden yuklu ve hazir.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#127909;</div>
+            <div>
+                <h4>VLC & Okular</h4>
+                <p>Multimedya oynaticisi ve PDF goruntileyici. Tum codec destegi dahil.</p>
+            </div>
+        </div>
+        <div class="app-item">
+            <div class="app-icon">&#128424;</div>
+            <div>
+                <h4>Flameshot</h4>
+                <p>Ekran goruntusu araci. Klavye kisayolu ile aninda ekran goruntusu.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- KARSILASTIRMA -->
+<section id="karsilastirma">
+    <h2 class="section-title">Diger Arch Dagitimlariyla Karsilastirma</h2>
+    <p class="section-subtitle">Hiroki OS neden farkli?</p>
+
+    <div style="overflow-x: auto;">
+    <table class="karsilastirma-table">
+        <thead>
+            <tr>
+                <th>Ozellik</th>
+                <th>Hiroki OS</th>
+                <th>Manjaro</th>
+                <th>EndeavourOS</th>
+                <th>Garuda Linux</th>
+                <th>Arch (Vanilla)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Arch altyapisi</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+            </tr>
+            <tr>
+                <td>Rolling release</td>
+                <td class="check">&#10003;</td>
+                <td class="partial">&#9888; Gecikmeli</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+            </tr>
+            <tr>
+                <td>Ozel installer</td>
+                <td class="check">&#10003; (Sifirdan yazildi)</td>
+                <td class="check">&#10003; (Calamares)</td>
+                <td class="check">&#10003; (Calamares)</td>
+                <td class="check">&#10003; (Calamares)</td>
+                <td class="cross">&#10007; Manuel</td>
+            </tr>
+            <tr>
+                <td>Snapshot yoneticisi (GUI)</td>
+                <td class="check">&#10003; (Ozel uygulama)</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="partial">&#9888; Timeshift</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Guncelleme oncesi snapshot</td>
+                <td class="check">&#10003; (Otomatik)</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Boot snapshot (90sn)</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Driver yoneticisi (GUI)</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Flatpak on kurulum</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>KDE Plasma 6</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007; Secenek</td>
+            </tr>
+            <tr>
+                <td>Turkce arayuz varsayilan</td>
+                <td class="check">&#10003;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Ozel uygulamalar</td>
+                <td class="check">&#10003; (10+ ozel app)</td>
+                <td class="partial">&#9888; Sinirli</td>
+                <td class="cross">&#10007;</td>
+                <td class="partial">&#9888; Birkaç</td>
+                <td class="cross">&#10007;</td>
+            </tr>
+            <tr>
+                <td>Acik kaynak & ucretsiz</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+                <td class="check">&#10003;</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<!-- INDIRME -->
+<section id="indir">
+    <h2 class="section-title">Hemen Indir</h2>
+    <p class="section-subtitle">ISO dosyasini indirin ve bilgisayariniza yazdirin.</p>
+
+    <div style="background:#111; border:1px solid #2a2a2a; padding:32px; margin-bottom:32px;">
+        <h3 style="color:#d34188; margin-bottom:12px;">Son Surum: Hiroki OS 1.0 Sakura</h3>
+        <p style="color:#888; font-size:14px; margin-bottom:8px;">ISO Boyutu: 5.0 GB &nbsp;|&nbsp; Mimari: x86_64 &nbsp;|&nbsp; Tarih: 9 Eylul 2026</p>
+        <p style="color:#666; font-size:13px;">Arch Linux 7.2.4 ustune insa edilmistir. KDE Plasma 6, Firefox, Timeshift ve onlarca uygulama dahildir.</p>
+        <div style="margin-top:20px;">
+            <a href="out/hiroki-os-1.0-x86_64.iso" class="btn btn-primary" download>ISO Indir (5.0 GB)</a>
+        </div>
+    </div>
+
+    <h3 style="color:#d34188; margin-bottom:20px; font-size:18px;">Yazmak Icin Araclar</h3>
+    <div class="indirme-grid">
+        <div class="indirme-card">
+            <span class="tool-icon">&#128225;</span>
+            <h4>Rufus</h4>
+            <p>Windows icin hizli ve guvenilir USB yazma araci. GPT ve UEFI destegi.</p>
+            <a href="https://rufus.ie" class="btn btn-outline" target="_blank">rufus.ie</a>
+        </div>
+        <div class="indirme-card">
+            <span class="tool-icon">&#128225;</span>
+            <h4>BalenaEtcher</h4>
+            <p>Windows, Mac ve Linux icin basit USB yazma araci. Cross-platform destek.</p>
+            <a href="https://etcher.balena.io" class="btn btn-outline" target="_blank">etcher.balena.io</a>
+        </div>
+        <div class="indirme-card">
+            <span class="tool-icon">&#128225;</span>
+            <h4>Ventoy</h4>
+            <p>USB'ye ISO'yu kopyalayarak boot etme araci. Birden fazla ISO depolayabilirsiniz.</p>
+            <a href="https://ventoy.net" class="btn btn-outline" target="_blank">ventoy.net</a>
+        </div>
+        <div class="indirme-card">
+            <span class="tool-icon">&#128187;</span>
+            <h4>dd (Linux/Mac)</h4>
+            <p>Terminal ile USB'ye yazma. <code style="color:#d34188;">sudo dd if=hiroki.iso of=/dev/sdX bs=4M</code></p>
+        </div>
+    </div>
+
+    <div style="background:#111; border:1px solid #2a2a2a; padding:24px;">
+        <h4 style="color:#d34188; margin-bottom:8px;">Kurulum Sonrasi</h4>
+        <p style="color:#888; font-size:13px; line-height:1.8;">
+            1. USB'ye yazdirin &rarr; 2. BIOS/UEFI'dan USB'den boot edin &rarr; 3. Live ortamda "Hiroki Installer"i calistirin &rarr;
+            4. Disk secin, bolmeleri yapin &rarr; 5. Kurulumu tamamlayin &rarr; 6. Yeniden baslatin ve Hiroki OS'un keyfini cikarin!
+        </p>
+    </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+    <p style="margin-bottom:8px;">
+        <strong style="color:#d34188;">HIROKI OS</strong> &mdash; Arch Linux uzerine insa edilmistir.
+    </p>
+    <p>
+        Turkce localize edilmis, kullanici dostu bir Linux deneyimi.
+        <a href="https://github.com" target="_blank">GitHub</a>
+    </p>
+    <p style="margin-top:12px; color:#333;">&copy; 2026 Hiroki OS. Tum haklari saklidir.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,1211 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Hiroki OS - Yedekleme Merkezi
+System backup/restore tool using tar with zstd compression.
+Copyright (c) 2026 Hiroki OS. All rights reserved.
+"""
+
+import os
+import sys
+import subprocess
+import tarfile
+import shutil
+import datetime
+import json
+from pathlib import Path
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTabWidget, QCheckBox, QPushButton, QProgressBar, QLabel,
+    QFileDialog, QListWidget, QListWidgetItem, QMessageBox,
+    QGroupBox, QSplitter, QTextEdit, QFrame, QSizePolicy,
+    QAbstractItemView, QComboBox, QSpacerItem
+)
+from PyQt6.QtCore import (
+    Qt, QThread, pyqtSignal, QSize, QSettings, QTimer
+)
+from PyQt6.QtGui import (
+    QFont, QColor, QPalette, QIcon, QTextCursor
+)
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+ACCENT_PINK = "#d34188"
+BG_DARK = "#111111"
+BG_SECONDARY = "#1a1a1a"
+BG_CARD = "#222222"
+BG_INPUT = "#2a2a2a"
+TEXT_PRIMARY = "#e0e0e0"
+TEXT_SECONDARY = "#999999"
+BORDER_COLOR = "#333333"
+DANGER_RED = "#e74c3c"
+SUCCESS_GREEN = "#27ae60"
+WARNING_ORANGE = "#f39c12"
+DEFAULT_BACKUP_DIR = os.path.expanduser("~/Backups")
+AVAILABLE_DIRS = [
+    ("/home", "Kullanici dizini"),
+    ("/etc", "Sistem yapilandirmasi"),
+    ("/boot", "Boot dosyalari"),
+    ("/var", "Degisken veriler"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Backup Worker Thread
+# ---------------------------------------------------------------------------
+class BackupWorker(QThread):
+    progress = pyqtSignal(int)
+    log = pyqtSignal(str)
+    finished_ok = pyqtSignal(str, int)
+    error = pyqtSignal(str)
+
+    def __init__(self, sources, dest_dir, parent=None):
+        super().__init__(parent)
+        self.sources = sources
+        self.dest_dir = dest_dir
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"hiroki-backup-{timestamp}.tar.zst"
+        archive_path = os.path.join(self.dest_dir, filename)
+
+        existing = [s for s in self.sources if os.path.exists(s)]
+        if not existing:
+            self.error.emit("Secilen hicbir dizin mevcut degil!")
+            return
+
+        total_size = 0
+        for src in existing:
+            try:
+                result = subprocess.run(
+                    ["du", "-sb", src],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0:
+                    total_size += int(result.stdout.split()[0])
+            except Exception:
+                pass
+
+        if total_size > 0:
+            if total_size >= 1073741824:
+                size_str = f"{total_size / 1073741824:.2f} GB"
+            elif total_size >= 1048576:
+                size_str = f"{total_size / 1048576:.2f} MB"
+            else:
+                size_str = f"{total_size / 1024:.2f} KB"
+            self.log.emit(f"Tahmini yedekleme boyutu: {size_str}")
+
+        os.makedirs(self.dest_dir, exist_ok=True)
+
+        self.log.emit(f"Yedekleme baslatiliyor: {filename}")
+        for i, src in enumerate(existing):
+            self.log.emit(f"  -> {src} ekleniyor...")
+
+        try:
+            cmd = [
+                "tar",
+                "--use-compress-program=zstd",
+                "-cf", archive_path,
+            ]
+            for src in existing:
+                cmd.append(src)
+
+            self.log.emit(f"Komut: {' '.join(cmd)}")
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            while process.poll() is None:
+                if self._cancelled:
+                    process.terminate()
+                    process.wait()
+                    self.error.emit("Yedekleme iptal edildi.")
+                    return
+                self.progress.emit(50)
+                process.wait(timeout=1)
+
+            if process.returncode != 0:
+                stderr = process.stderr.read().decode("utf-8", errors="replace")
+                self.error.emit(f"tar hatasi: {stderr.strip()}")
+                return
+
+            self.progress.emit(100)
+
+            archive_size = os.path.getsize(archive_path)
+            if archive_size >= 1073741824:
+                final_size = f"{archive_size / 1073741824:.2f} GB"
+            elif archive_size >= 1048576:
+                final_size = f"{archive_size / 1048576:.2f} MB"
+            else:
+                final_size = f"{archive_size / 1024:.2f} KB"
+
+            self.finished_ok.emit(archive_path, archive_size)
+
+        except FileNotFoundError:
+            self.error.emit(
+                "tar veya zstd bulunamadi! Lutfen sisteme kurun:\n"
+                "  pacman -S tar zstd"
+            )
+        except Exception as e:
+            self.error.emit(f"Beklenmeyen hata: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Restore Worker Thread
+# ---------------------------------------------------------------------------
+class RestoreWorker(QThread):
+    progress = pyqtSignal(int)
+    log = pyqtSignal(str)
+    finished_ok = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, archive_path, parent=None):
+        super().__init__(parent)
+        self.archive_path = archive_path
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        self.log.emit(f"Geri yukleme baslatiliyor: {os.path.basename(self.archive_path)}")
+
+        try:
+            cmd = [
+                "tar",
+                "--use-compress-program=zstd",
+                "-tf", self.archive_path,
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                self.error.emit("Arsiv icerigi okunamadi.")
+                return
+
+            total_items = len(result.stdout.strip().split("\n"))
+            self.log.emit(f"Arsiv icerigi: {total_items} dosya/dizin")
+
+            self.progress.emit(10)
+
+            cmd = [
+                "tar",
+                "--use-compress-program=zstd",
+                "-xf", self.archive_path,
+                "-C", "/",
+            ]
+
+            self.progress.emit(30)
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            while process.poll() is None:
+                if self._cancelled:
+                    process.terminate()
+                    process.wait()
+                    self.error.emit("Geri yukleme iptal edildi.")
+                    return
+                self.progress.emit(60)
+                process.wait(timeout=1)
+
+            if process.returncode != 0:
+                stderr = process.stderr.read().decode("utf-8", errors="replace")
+                self.error.emit(f"Geri yukleme hatasi: {stderr.strip()}")
+                return
+
+            self.progress.emit(100)
+            self.finished_ok.emit(self.archive_path)
+
+        except FileNotFoundError:
+            self.error.emit(
+                "tar veya zstd bulunamadi! Lutfen sisteme kurun:\n"
+                "  pacman -S tar zstd"
+            )
+        except Exception as e:
+            self.error.emit(f"Beklenmeyen hata: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Backup Details Worker (reads archive contents)
+# ---------------------------------------------------------------------------
+class DetailsWorker(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, archive_path, parent=None):
+        super().__init__(parent)
+        self.archive_path = archive_path
+
+    def run(self):
+        try:
+            cmd = [
+                "tar",
+                "--use-compress-program=zstd",
+                "-tf", self.archive_path,
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=60
+            )
+            if result.returncode != 0:
+                self.error.emit("Arsiv icerigi okunamadi.")
+                return
+
+            items = result.stdout.strip().split("\n")
+            self.finished.emit(items)
+        except FileNotFoundError:
+            self.error.emit("tar veya zstd bulunamadi!")
+        except Exception as e:
+            self.error.emit(f"Hata: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Main Window
+# ---------------------------------------------------------------------------
+class HirokiBackupWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.settings = QSettings("HirokiOS", "HirokiBackup")
+        self.backup_worker = None
+        self.restore_worker = None
+        self.details_worker = None
+        self._init_ui()
+        self._load_settings()
+        self._refresh_backups()
+
+    def _init_ui(self):
+        self.setWindowTitle("Hiroki OS - Yedekleme")
+        self.setMinimumSize(650, 500)
+        self.resize(750, 580)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header
+        header = QFrame()
+        header.setFixedHeight(70)
+        header.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_DARK};
+                border-bottom: 2px solid {ACCENT_PINK};
+            }}
+        """)
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(20, 10, 20, 10)
+
+        title = QLabel("Hiroki OS - Yedekleme Merkezi")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(f"""
+            color: {ACCENT_PINK};
+            font-size: 22px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        """)
+        header_layout.addWidget(title)
+
+        layout.addWidget(header)
+
+        # Tabs
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: none;
+                background-color: {BG_DARK};
+            }}
+            QTabBar::tab {{
+                background-color: {BG_SECONDARY};
+                color: {TEXT_SECONDARY};
+                padding: 12px 32px;
+                margin-right: 2px;
+                border: none;
+                border-bottom: 3px solid transparent;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {BG_DARK};
+                color: {ACCENT_PINK};
+                border-bottom: 3px solid {ACCENT_PINK};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {BG_CARD};
+                color: {TEXT_PRIMARY};
+            }}
+        """)
+
+        # -- Backup Tab --
+        self.backup_tab = self._create_backup_tab()
+        self.tabs.addTab(self.backup_tab, "Yedekle")
+
+        # -- Restore Tab --
+        self.restore_tab = self._create_restore_tab()
+        self.tabs.addTab(self.restore_tab, "Geri Yukle")
+
+        layout.addWidget(self.tabs)
+
+        # Status bar
+        self.status_label = QLabel("Hazirlaniyor...")
+        self.status_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 12px;
+            padding: 6px 20px;
+            background-color: {BG_SECONDARY};
+            border-top: 1px solid {BORDER_COLOR};
+        """)
+        layout.addWidget(self.status_label)
+
+    # ---- Backup Tab ----
+    def _create_backup_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        # Source directories group
+        src_group = QGroupBox("Yedeklenecek Dizinler")
+        src_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 16px 12px 12px 12px;
+                background-color: {BG_CARD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+                background-color: {BG_CARD};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        src_layout = QVBoxLayout(src_group)
+        src_layout.setSpacing(10)
+
+        self.checkboxes = {}
+        for path, desc in AVAILABLE_DIRS:
+            cb = QCheckBox(f"{path}  —  {desc}")
+            cb.setChecked(path in ("/home", "/etc"))
+            cb.setStyleSheet(f"""
+                QCheckBox {{
+                    color: {TEXT_PRIMARY};
+                    font-size: 13px;
+                    spacing: 10px;
+                    padding: 6px 0;
+                }}
+                QCheckBox::indicator {{
+                    width: 20px;
+                    height: 20px;
+                    border: 2px solid {BORDER_COLOR};
+                    border-radius: 4px;
+                    background-color: {BG_INPUT};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {ACCENT_PINK};
+                    border-color: {ACCENT_PINK};
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {ACCENT_PINK};
+                }}
+            """)
+            self.checkboxes[path] = cb
+            src_layout.addWidget(cb)
+
+        layout.addWidget(src_group)
+
+        # Destination
+        dest_group = QGroupBox("Hedef Klasor")
+        dest_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 16px 12px 12px 12px;
+                background-color: {BG_CARD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+                background-color: {BG_CARD};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        dest_layout = QHBoxLayout(dest_group)
+
+        self.dest_entry = QLabel(DEFAULT_BACKUP_DIR)
+        self.dest_entry.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 13px;
+            background-color: {BG_INPUT};
+            border: 1px solid {BORDER_COLOR};
+            border-radius: 6px;
+            padding: 10px 14px;
+        """)
+        dest_layout.addWidget(self.dest_entry, 1)
+
+        browse_btn = QPushButton("Gozat")
+        browse_btn.setFixedWidth(100)
+        browse_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_INPUT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 10px;
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_PINK};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        browse_btn.clicked.connect(self._browse_dest)
+        dest_layout.addWidget(browse_btn)
+
+        layout.addWidget(dest_group)
+
+        # Size estimate
+        self.size_label = QLabel("")
+        self.size_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 12px;
+            padding: 4px 0;
+        """)
+        layout.addWidget(self.size_label)
+
+        # Progress
+        self.backup_progress = QProgressBar()
+        self.backup_progress.setRange(0, 100)
+        self.backup_progress.setValue(0)
+        self.backup_progress.setFixedHeight(8)
+        self.backup_progress.setTextVisible(False)
+        self.backup_progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: {BG_INPUT};
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {ACCENT_PINK};
+                border-radius: 4px;
+            }}
+        """)
+        layout.addWidget(self.backup_progress)
+
+        # Buttons row
+        btn_layout = QHBoxLayout()
+
+        self.estimate_btn = QPushButton("Tahmini Boyut Hesapla")
+        self.estimate_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_INPUT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 12px 20px;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_PINK};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        self.estimate_btn.clicked.connect(self._estimate_size)
+        btn_layout.addWidget(self.estimate_btn)
+
+        btn_layout.addStretch()
+
+        self.backup_btn = QPushButton("Yedekle")
+        self.backup_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_PINK};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 12px 36px;
+                font-size: 15px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #e04e9a;
+            }}
+            QPushButton:pressed {{
+                background-color: #b83575;
+            }}
+            QPushButton:disabled {{
+                background-color: #444;
+                color: #888;
+            }}
+        """)
+        self.backup_btn.clicked.connect(self._start_backup)
+        btn_layout.addWidget(self.backup_btn)
+
+        layout.addLayout(btn_layout)
+
+        # Log
+        self.backup_log = QTextEdit()
+        self.backup_log.setReadOnly(True)
+        self.backup_log.setMaximumHeight(130)
+        self.backup_log.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BG_INPUT};
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: monospace;
+                font-size: 12px;
+            }}
+        """)
+        layout.addWidget(self.backup_log)
+
+        layout.addStretch()
+        return widget
+
+    # ---- Restore Tab ----
+    def _create_restore_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        # Backup list group
+        list_group = QGroupBox("Mevcut Yedekler")
+        list_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 16px 12px 12px 12px;
+                background-color: {BG_CARD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+                background-color: {BG_CARD};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        list_layout = QVBoxLayout(list_group)
+
+        self.backup_list = QListWidget()
+        self.backup_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {BG_INPUT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 10px 8px;
+                border-bottom: 1px solid {BORDER_COLOR};
+                border-radius: 4px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {ACCENT_PINK};
+                color: #ffffff;
+            }}
+            QListWidget::item:hover {{
+                background-color: #2d2d2d;
+            }}
+        """)
+        self.backup_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.backup_list.currentRowChanged.connect(self._on_backup_selected)
+        list_layout.addWidget(self.backup_list)
+
+        # List controls
+        list_btn_layout = QHBoxLayout()
+
+        refresh_btn = QPushButton("Yenile")
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_INPUT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_PINK};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        refresh_btn.clicked.connect(self._refresh_backups)
+        list_btn_layout.addWidget(refresh_btn)
+
+        self.restore_path_label = QLabel("Hedef klasor: " + DEFAULT_BACKUP_DIR)
+        self.restore_path_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 12px;
+        """)
+        list_btn_layout.addWidget(self.restore_path_label, 1)
+
+        open_folder_btn = QPushButton("Klasoru Ac")
+        open_folder_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_INPUT};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_PINK};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        open_folder_btn.clicked.connect(self._open_backup_folder)
+        list_btn_layout.addWidget(open_folder_btn)
+
+        list_layout.addLayout(list_btn_layout)
+        layout.addWidget(list_group, 1)
+
+        # Preview
+        preview_group = QGroupBox("Arsiv Icerigi")
+        preview_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 16px 12px 12px 12px;
+                background-color: {BG_CARD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+                background-color: {BG_CARD};
+                color: {ACCENT_PINK};
+            }}
+        """)
+        preview_layout = QVBoxLayout(preview_group)
+
+        self.preview_text = QTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_text.setMaximumHeight(100)
+        self.preview_text.setPlaceholderText("Yedek secildiginde icerik burada gosterilecek...")
+        self.preview_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BG_INPUT};
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: monospace;
+                font-size: 12px;
+            }}
+        """)
+        preview_layout.addWidget(self.preview_text)
+        layout.addWidget(preview_group)
+
+        # Progress
+        self.restore_progress = QProgressBar()
+        self.restore_progress.setRange(0, 100)
+        self.restore_progress.setValue(0)
+        self.restore_progress.setFixedHeight(8)
+        self.restore_progress.setTextVisible(False)
+        self.restore_progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: {BG_INPUT};
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {SUCCESS_GREEN};
+                border-radius: 4px;
+            }}
+        """)
+        layout.addWidget(self.restore_progress)
+
+        # Restore button
+        restore_btn_layout = QHBoxLayout()
+        restore_btn_layout.addStretch()
+
+        self.restore_btn = QPushButton("Geri Yukle")
+        self.restore_btn.setEnabled(False)
+        self.restore_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {SUCCESS_GREEN};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 12px 36px;
+                font-size: 15px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #2ecc71;
+            }}
+            QPushButton:pressed {{
+                background-color: #1e8449;
+            }}
+            QPushButton:disabled {{
+                background-color: #444;
+                color: #888;
+            }}
+        """)
+        self.restore_btn.clicked.connect(self._start_restore)
+        restore_btn_layout.addWidget(self.restore_btn)
+
+        layout.addLayout(restore_btn_layout)
+
+        # Restore log
+        self.restore_log = QTextEdit()
+        self.restore_log.setReadOnly(True)
+        self.restore_log.setMaximumHeight(100)
+        self.restore_log.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BG_INPUT};
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: monospace;
+                font-size: 12px;
+            }}
+        """)
+        layout.addWidget(self.restore_log)
+
+        return widget
+
+    # ---- Settings persistence ----
+    def _load_settings(self):
+        dest = self.settings.value("dest_dir", DEFAULT_BACKUP_DIR)
+        self.dest_entry.setText(dest)
+        self.restore_path_label.setText(f"Hedef klasor: {dest}")
+        checked = self.settings.value("checked_dirs", ["/home", "/etc"])
+        for path, cb in self.checkboxes.items():
+            cb.setChecked(path in checked)
+
+    def _save_settings(self):
+        self.settings.setValue("dest_dir", self.dest_entry.text())
+        checked = [p for p, cb in self.checkboxes.items() if cb.isChecked()]
+        self.settings.setValue("checked_dirs", checked)
+
+    # ---- Helpers ----
+    def _get_selected_sources(self):
+        return [p for p, cb in self.checkboxes.items() if cb.isChecked()]
+
+    def _get_dest_dir(self):
+        return self.dest_entry.text().strip()
+
+    def _append_log(self, log_widget, message):
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        log_widget.append(f"[{timestamp}] {message}")
+        log_widget.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _format_size(self, size_bytes):
+        if size_bytes >= 1073741824:
+            return f"{size_bytes / 1073741824:.2f} GB"
+        elif size_bytes >= 1048576:
+            return f"{size_bytes / 1048576:.2f} MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.2f} KB"
+        return f"{size_bytes} bayt"
+
+    # ---- Backup operations ----
+    def _browse_dest(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, "Yedekleme Klasoru Sec", self._get_dest_dir()
+        )
+        if directory:
+            self.dest_entry.setText(directory)
+            self.restore_path_label.setText(f"Hedef klasor: {directory}")
+            self._save_settings()
+            self._refresh_backups()
+
+    def _estimate_size(self):
+        sources = self._get_selected_sources()
+        if not sources:
+            self.size_label.setText("Lutfen en az bir dizin secin.")
+            return
+
+        existing = [s for s in sources if os.path.exists(s)]
+        if not existing:
+            self.size_label.setText("Secilen hicbir dizin mevcut degil.")
+            return
+
+        self.size_label.setText("Hesaplaniyor...")
+        QApplication.processEvents()
+
+        total = 0
+        for src in existing:
+            try:
+                result = subprocess.run(
+                    ["du", "-sb", src],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0:
+                    total += int(result.stdout.split()[0])
+            except Exception:
+                pass
+
+        self.size_label.setText(
+            f"Tahmini boyut: {self._format_size(total)} "
+            f"({len(existing)} dizin secili)"
+        )
+
+    def _start_backup(self):
+        sources = self._get_selected_sources()
+        if not sources:
+            QMessageBox.warning(
+                self, "Uyari",
+                "Lutfen yedeklenecek en az bir dizin secin!"
+            )
+            return
+
+        dest = self._get_dest_dir()
+        if not dest:
+            QMessageBox.warning(
+                self, "Uyari",
+                "Lutfen bir hedef klasor secin!"
+            )
+            return
+
+        self._save_settings()
+
+        self.backup_btn.setEnabled(False)
+        self.backup_btn.setText("Yedekleniyor...")
+        self.backup_progress.setValue(0)
+        self.backup_log.clear()
+
+        self.backup_worker = BackupWorker(sources, dest)
+        self.backup_worker.progress.connect(self._on_backup_progress)
+        self.backup_worker.log.connect(
+            lambda msg: self._append_log(self.backup_log, msg)
+        )
+        self.backup_worker.finished_ok.connect(self._on_backup_done)
+        self.backup_worker.error.connect(self._on_backup_error)
+        self.backup_worker.start()
+
+    def _on_backup_progress(self, value):
+        self.backup_progress.setValue(value)
+
+    def _on_backup_done(self, path, size):
+        self.backup_btn.setEnabled(True)
+        self.backup_btn.setText("Yedekle")
+        self.backup_progress.setValue(100)
+        self._append_log(
+            self.backup_log,
+            f"Basarili! Dosya: {os.path.basename(path)} ({self._format_size(size)})"
+        )
+        self.status_label.setText("Son islem: Yedekleme basarili tamamlandi.")
+        QMessageBox.information(
+            self, "Yedekleme Tamamlandi",
+            f"Yedekleme basariyla olusturuldu.\n\n"
+            f"Dosya: {os.path.basename(path)}\n"
+            f"Boyut: {self._format_size(size)}\n"
+            f"Konum: {path}"
+        )
+        self._refresh_backups()
+
+    def _on_backup_error(self, msg):
+        self.backup_btn.setEnabled(True)
+        self.backup_btn.setText("Yedekle")
+        self.backup_progress.setValue(0)
+        self._append_log(self.backup_log, f"HATA: {msg}")
+        self.status_label.setText("Son islem: Yedekleme basarisiz.")
+        QMessageBox.critical(self, "Yedekleme Hatasi", msg)
+
+    # ---- Restore operations ----
+    def _refresh_backups(self):
+        self.backup_list.clear()
+        dest = self._get_dest_dir()
+        self.restore_path_label.setText(f"Hedef klasor: {dest}")
+
+        if not os.path.isdir(dest):
+            self.backup_list.addItem("(Klasor mevcut degil)")
+            return
+
+        try:
+            files = sorted(
+                [
+                    f for f in os.listdir(dest)
+                    if f.startswith("hiroki-backup-") and f.endswith(".tar.zst")
+                ],
+                reverse=True,
+            )
+        except PermissionError:
+            self.backup_list.addItem("(Erişim izni yok)")
+            return
+
+        if not files:
+            self.backup_list.addItem("(Yedek bulunamadi)")
+            return
+
+        for f in files:
+            full_path = os.path.join(dest, f)
+            try:
+                size = os.path.getsize(full_path)
+                size_str = self._format_size(size)
+                mtime = datetime.datetime.fromtimestamp(
+                    os.path.getmtime(full_path)
+                )
+                date_str = mtime.strftime("%d.%m.%Y %H:%M")
+                item_text = f"{f}  |  {size_str}  |  {date_str}"
+            except OSError:
+                item_text = f
+
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, full_path)
+            self.backup_list.addItem(item)
+
+    def _on_backup_selected(self, row):
+        if row < 0:
+            self.restore_btn.setEnabled(False)
+            self.preview_text.clear()
+            return
+
+        item = self.backup_list.item(row)
+        if item is None:
+            self.restore_btn.setEnabled(False)
+            return
+
+        archive_path = item.data(Qt.ItemDataRole.UserRole)
+        if archive_path is None or not os.path.isfile(archive_path):
+            self.restore_btn.setEnabled(False)
+            return
+
+        self.restore_btn.setEnabled(True)
+        self.preview_text.setPlainText("Yukleniyor...")
+
+        if self.details_worker and self.details_worker.isRunning():
+            self.details_worker.terminate()
+
+        self.details_worker = DetailsWorker(archive_path)
+        self.details_worker.finished.connect(self._on_details_loaded)
+        self.details_worker.error.connect(
+            lambda msg: self.preview_text.setPlainText(f"Hata: {msg}")
+        )
+        self.details_worker.start()
+
+    def _on_details_loaded(self, items):
+        display = "\n".join(items[:200])
+        if len(items) > 200:
+            display += f"\n\n... ve {len(items) - 200} dosya daha"
+        self.preview_text.setPlainText(display)
+
+    def _open_backup_folder(self):
+        dest = self._get_dest_dir()
+        if os.path.isdir(dest):
+            subprocess.Popen(["xdg-open", dest])
+        else:
+            QMessageBox.information(
+                self, "Bilgi",
+                f"Klasor mevcut degil:\n{dest}"
+            )
+
+    def _start_restore(self):
+        item = self.backup_list.currentItem()
+        if item is None:
+            return
+
+        archive_path = item.data(Qt.ItemDataRole.UserRole)
+        if not archive_path or not os.path.isfile(archive_path):
+            QMessageBox.warning(self, "Uyari", "Secilen yedek dosyasi bulunamadi.")
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            "Geri Yukleme Onayi",
+            f"Su yedek dosyasi geri yuklenecek:\n\n"
+            f"{os.path.basename(archive_path)}\n\n"
+            f"Bu islem mevcut dosyalarin uzerine yazabilir!\n"
+            f"Devam etmek istediginize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.restore_btn.setEnabled(False)
+        self.restore_btn.setText("Geri yukleniyor...")
+        self.restore_progress.setValue(0)
+        self.restore_log.clear()
+
+        self.restore_worker = RestoreWorker(archive_path)
+        self.restore_worker.progress.connect(self._on_restore_progress)
+        self.restore_worker.log.connect(
+            lambda msg: self._append_log(self.restore_log, msg)
+        )
+        self.restore_worker.finished_ok.connect(self._on_restore_done)
+        self.restore_worker.error.connect(self._on_restore_error)
+        self.restore_worker.start()
+
+    def _on_restore_progress(self, value):
+        self.restore_progress.setValue(value)
+
+    def _on_restore_done(self, path):
+        self.restore_btn.setEnabled(True)
+        self.restore_btn.setText("Geri Yukle")
+        self.restore_progress.setValue(100)
+        self._append_log(
+            self.restore_log,
+            f"Basarili! Geri yukleme tamamlandi: {os.path.basename(path)}"
+        )
+        self.status_label.setText("Son islem: Geri yukleme basarili tamamlandi.")
+        QMessageBox.information(
+            self, "Geri Yukleme Tamamlandi",
+            "Geri yukleme basariyla tamamlandi!\n"
+            "Bazi degisikliklerin etkili olmasi icin\n"
+            "sistemi yeniden baslatmaniz onerilir."
+        )
+
+    def _on_restore_error(self, msg):
+        self.restore_btn.setEnabled(True)
+        self.restore_btn.setText("Geri Yukle")
+        self.restore_progress.setValue(0)
+        self._append_log(self.restore_log, f"HATA: {msg}")
+        self.status_label.setText("Son islem: Geri yukleme basarisiz.")
+        QMessageBox.critical(self, "Geri Yukleme Hatasi", msg)
+
+    def closeEvent(self, event):
+        if self.backup_worker and self.backup_worker.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "Yedekleme Devam Ediyor",
+                "Yedekleme islemi devam ediyor. Iptal etmek ve cikmak istiyor musunuz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.backup_worker.cancel()
+                self.backup_worker.wait(3000)
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
+
+
+# ---------------------------------------------------------------------------
+# Stylesheet
+# ---------------------------------------------------------------------------
+def get_stylesheet():
+    return f"""
+    * {{
+        font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+    }}
+    QMainWindow {{
+        background-color: {BG_DARK};
+    }}
+    QWidget {{
+        background-color: {BG_DARK};
+        color: {TEXT_PRIMARY};
+    }}
+    QTabBar {{
+        background-color: {BG_SECONDARY};
+    }}
+    QScrollBar:vertical {{
+        background-color: {BG_DARK};
+        width: 10px;
+        margin: 0;
+    }}
+    QScrollBar::handle:vertical {{
+        background-color: #444;
+        min-height: 30px;
+        border-radius: 5px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background-color: {ACCENT_PINK};
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        height: 0px;
+    }}
+    QScrollBar:horizontal {{
+        background-color: {BG_DARK};
+        height: 10px;
+        margin: 0;
+    }}
+    QScrollBar::handle:horizontal {{
+        background-color: #444;
+        min-width: 30px;
+        border-radius: 5px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background-color: {ACCENT_PINK};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0px;
+    }}
+    QMessageBox {{
+        background-color: {BG_DARK};
+    }}
+    QMessageBox QLabel {{
+        color: {TEXT_PRIMARY};
+        font-size: 13px;
+    }}
+    QMessageBox QPushButton {{
+        background-color: {BG_CARD};
+        color: {TEXT_PRIMARY};
+        border: 1px solid {BORDER_COLOR};
+        border-radius: 4px;
+        padding: 6px 20px;
+        min-width: 80px;
+    }}
+    QMessageBox QPushButton:hover {{
+        border-color: {ACCENT_PINK};
+        color: {ACCENT_PINK};
+    }}
+    QFileDialog {{
+        background-color: {BG_DARK};
+    }}
+    """
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Hiroki Backup")
+    app.setOrganizationName("HirokiOS")
+
+    app.setStyleSheet(get_stylesheet())
+
+    window = HirokiBackupWindow()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

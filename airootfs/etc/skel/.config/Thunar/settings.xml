@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thunar>
+  <last-folder-view>
+    <property name="visible-columns" type="string" value="name,-size,type,date-modified,permissions"/>
+    <property name="sort-column" type="string" value="name"/>
+    <property name="sort-order" type="int" value="0"/>
+    <property name="zoom-level" type="string" value="NORMAL"/>
+  </last-folder-view>
+  <misc>
+    <property name="show-hidden" type="bool" value="false"/>
+    <property name="date-style" type="string" value="THUNAR_DATE_STYLE_SHORT"/>
+    <property name="default-view" type="string" value="ThunarDetailsView"/>
+  </misc>
+  <defaults>
+    <property name="misc-show-delete-action" type="bool" value="true"/>
+    <property name="misc-show-open-action" type="bool" value="true"/>
+  </defaults>
+</thunar>

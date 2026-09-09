@@ -1,0 +1,654 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Hiroki OS - Snapshot Yoneticisi (PyQt6 + Timeshift)"""
+
+import sys
+import os
+import subprocess
+import json
+from datetime import datetime
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QCheckBox,
+    QHeaderView, QFrame, QMessageBox, QAbstractItemView, QSplitter,
+    QGroupBox, QTextEdit, QSystemTrayIcon, QMenu
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QAction
+
+ACCENT = "#d34188"
+BG_MAIN = "#111111"
+BG_CARD = "#1a1a1a"
+BG_ROW = "#141414"
+BG_ROW_ALT = "#181818"
+TEXT_PRIMARY = "#e0e0e0"
+TEXT_SECONDARY = "#888888"
+TEXT_DIM = "#555555"
+BORDER_COLOR = "#2a2a2a"
+SUCCESS_COLOR = "#4caf50"
+ERROR_COLOR = "#f44336"
+WARNING_COLOR = "#ff9800"
+
+SETTINGS_FILE = "/etc/hiroki/snapshot-settings.json"
+
+DEFAULT_SETTINGS = {
+    "pre_update_snapshot": True,
+    "boot_snapshot_90s": False,
+}
+
+STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {BG_MAIN};
+    color: {TEXT_PRIMARY};
+}}
+QLabel {{
+    color: {TEXT_PRIMARY};
+}}
+QGroupBox {{
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 12px;
+    font-weight: bold;
+    color: {ACCENT};
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+}}
+QTableWidget {{
+    background-color: {BG_CARD};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    gridline-color: {BORDER_COLOR};
+    selection-background-color: #2a1a2a;
+    selection-color: {ACCENT};
+    font-size: 13px;
+}}
+QTableWidget::item {{
+    padding: 6px 10px;
+    border: none;
+}}
+QTableWidget::item:selected {{
+    background-color: #2a1a2a;
+}}
+QHeaderView::section {{
+    background-color: #1e1e1e;
+    color: {ACCENT};
+    border: none;
+    border-bottom: 2px solid {ACCENT};
+    padding: 8px 10px;
+    font-weight: bold;
+    font-size: 13px;
+}}
+QPushButton {{
+    background-color: #1e1e1e;
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 5px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: bold;
+}}
+QPushButton:hover {{
+    background-color: #252525;
+    border-color: {ACCENT};
+}}
+QPushButton:pressed {{
+    background-color: #2a1a2a;
+}}
+QPushButton:disabled {{
+    background-color: #151515;
+    color: {TEXT_DIM};
+    border-color: #222;
+}}
+QPushButton#accentButton {{
+    background-color: {ACCENT};
+    color: #ffffff;
+    border: none;
+}}
+QPushButton#accentButton:hover {{
+    background-color: #e0509a;
+}}
+QPushButton#accentButton:pressed {{
+    background-color: #b83070;
+}}
+QPushButton#accentButton:disabled {{
+    background-color: #442233;
+    color: #666;
+}}
+QPushButton#dangerButton {{
+    background-color: #331111;
+    color: {ERROR_COLOR};
+    border: 1px solid #552222;
+}}
+QPushButton#dangerButton:hover {{
+    background-color: #441818;
+    border-color: {ERROR_COLOR};
+}}
+QCheckBox {{
+    color: {TEXT_PRIMARY};
+    spacing: 8px;
+    font-size: 13px;
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border: 2px solid {BORDER_COLOR};
+    border-radius: 4px;
+    background-color: {BG_CARD};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {ACCENT};
+    border-color: {ACCENT};
+}}
+QTextEdit {{
+    background-color: {BG_CARD};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+}}
+QMenu {{
+    background-color: #1a1a1a;
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 4px;
+}}
+QMenu::item:selected {{
+    background-color: #2a1a2a;
+}}
+QScrollBar:vertical {{
+    background-color: {BG_MAIN};
+    width: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical {{
+    background-color: #333;
+    border-radius: 4px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background-color: {ACCENT};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+"""
+
+
+def load_settings():
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                return {**DEFAULT_SETTINGS, **data}
+    except Exception:
+        pass
+    return DEFAULT_SETTINGS.copy()
+
+
+def save_settings(settings):
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        pass
+
+
+def run_cmd(cmd, timeout=30):
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+        return result.stdout.strip(), result.returncode
+    except FileNotFoundError:
+        return "Komut bulunamadi", -1
+    except subprocess.TimeoutExpired:
+        return "Zaman asimi", -1
+    except Exception as e:
+        return str(e), -1
+
+
+def take_snapshot(comment="Hiroki snapshot"):
+    return run_cmd(
+        ["pkexec", "timeshift", "--create", "--comments", comment, "--yes"],
+        timeout=120
+    )
+
+
+class SnapshotWorker(QThread):
+    list_done = pyqtSignal(list)
+    list_error = pyqtSignal(str)
+
+    def run(self):
+        out, code = run_cmd(["timeshift", "--list"], timeout=30)
+        if code != 0:
+            self.list_error.emit(out or "Timeshift calismadi. Root yetkisi gerekebilir.")
+            return
+        snaps = []
+        for line in out.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Device") or line.startswith("-") or "Listing" in line or "Mounted" in line or "Snapshot" in line:
+                continue
+            if any(c.isdigit() for c in line[:10]):
+                snaps.append(line)
+        self.list_done.emit(snaps)
+
+
+class SnapshotCreateWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def run(self):
+        out, code = run_cmd(
+            ["pkexec", "timeshift", "--create", "--comments", "Hiroki manuel", "--yes"],
+            timeout=180
+        )
+        if code == 0:
+            self.done.emit(True, "Snapshot olusturuldu!")
+        else:
+            self.done.emit(False, out or "Snapshot olusturulamadi.")
+
+
+class SnapshotDeleteWorker(QThread):
+    done = pyqtSignal(bool, str)
+    def __init__(self, snap_id):
+        super().__init__()
+        self.snap_id = snap_id
+
+    def run(self):
+        out, code = run_cmd(
+            ["pkexec", "timeshift", "--delete", "--snapshot", self.snap_id, "--yes"],
+            timeout=120
+        )
+        if code == 0:
+            self.done.emit(True, f"{self.snap_id} silindi.")
+        else:
+            self.done.emit(False, out or "Silinemedi.")
+
+
+class HirokiSnapshotWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hiroki OS - Snapshot Yoneticisi")
+        self.setMinimumSize(700, 520)
+        self.resize(800, 600)
+        self.settings = load_settings()
+        self.snapshots = []
+        self.worker = None
+        self.create_worker = None
+        self.delete_worker = None
+        self.tray_icon = None
+
+        self._init_ui()
+        self._init_tray()
+        self.setStyleSheet(STYLESHEET)
+        self.refresh_snapshots()
+
+    def _init_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        top_bar = self._build_top_bar()
+        main_layout.addWidget(top_bar)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"background-color: {ACCENT}; max-height: 2px; border: none;")
+        main_layout.addWidget(separator)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 12, 16, 8)
+        content_layout.setSpacing(10)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        settings_widget = self._build_settings_panel()
+        splitter.addWidget(settings_widget)
+
+        list_widget = self._build_list_panel()
+        splitter.addWidget(list_widget)
+
+        splitter.setSizes([160, 340])
+        content_layout.addWidget(splitter)
+
+        main_layout.addWidget(content, 1)
+
+        bottom_bar = self._build_bottom_bar()
+        main_layout.addWidget(bottom_bar)
+
+    def _build_top_bar(self):
+        widget = QWidget()
+        widget.setStyleSheet(f"background-color: {BG_CARD}; border-bottom: 1px solid {BORDER_COLOR};")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(16, 12, 16, 12)
+
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(2)
+
+        title = QLabel("Snapshot Yoneticisi")
+        title.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {ACCENT}; background: transparent;")
+        title_layout.addWidget(title)
+
+        subtitle = QLabel("Timeshift tabanli sistem geri yukleme noktalari")
+        subtitle.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
+        title_layout.addWidget(subtitle)
+
+        layout.addLayout(title_layout)
+        layout.addStretch()
+
+        return widget
+
+    def _build_settings_panel(self):
+        group = QGroupBox("Otomatik Snapshot Ayarlari")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+
+        info_text = QTextEdit()
+        info_text.setReadOnly(True)
+        info_text.setMaximumHeight(70)
+        info_text.setHtml(
+            '<span style="color: #888888;">'
+            '<b style="color: #d34188;">Snapshot nedir?</b> '
+            'Sisteminizin o anki durumunun bir kopyasıdır. Herhangi bir sorun yaşadiginizda '
+            'snapshot\'a geri donerek sisteminizi eski calisan haline getirebilirsiniz. '
+            'Ornek: Guncelleme sonrasi bozulma, yanlis dosya silme, konfigurasyon hatasi.<br><br>'
+            '<b style="color: #d34188;">Otomatik snapshot</b> '
+            'sistem onemli islemlerden otomatik olarak korunmanizi saglar.'
+            '</span>'
+        )
+        info_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: transparent;
+                border: none;
+                padding: 4px;
+            }}
+        """)
+        layout.addWidget(info_text)
+
+        self.cb_pre_update = QCheckBox(
+            "Guncelleme oncesi otomatik snapshot al"
+        )
+        self.cb_pre_update.setChecked(self.settings["pre_update_snapshot"])
+        self.cb_pre_update.setToolTip(
+            "pacman -Syu ile guncelleme yapmadan once otomatik olarak snapshot olusturur. "
+            "Boylece guncelleme sonrasi bir sorun yasanirsa kolayca geri donulebilir.\n\n"
+            "Onerilen: ACIK"
+        )
+        self.cb_pre_update.stateChanged.connect(self._on_setting_changed)
+        layout.addWidget(self.cb_pre_update)
+
+        self.cb_boot_90s = QCheckBox(
+            "90 saniye sonra otomatik snapshot al"
+        )
+        self.cb_boot_90s.setChecked(self.settings["boot_snapshot_90s"])
+        self.cb_boot_90s.setToolTip(
+            "Sistem acildiktan 90 saniye sonra otomatik olarak snapshot olusturur. "
+            "Bu sayede her acilis oncesi bir geri yukleme noktaniz olur.\n\n"
+            "Varsayilan: KAPALI (disk alani tasarrufu icin)"
+        )
+        self.cb_boot_90s.stateChanged.connect(self._on_setting_changed)
+        layout.addWidget(self.cb_boot_90s)
+
+        return group
+
+    def _build_list_panel(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        header = QLabel("Mevcut Snapshot'lar")
+        header.setFont(QFont("Sans Serif", 13, QFont.Weight.Bold))
+        header.setStyleSheet(f"color: {ACCENT}; padding: 4px 0;")
+        layout.addWidget(header)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["ID", "Tarih", "Aciklama"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setRowCount(0)
+
+        header_view = self.table.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+
+        layout.addWidget(self.table)
+
+        self.status_label = QLabel("Snapshot'lar yukleniyor...")
+        self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 2px 0;")
+        layout.addWidget(self.status_label)
+
+        return widget
+
+    def _build_bottom_bar(self):
+        widget = QWidget()
+        widget.setStyleSheet(f"background-color: {BG_CARD}; border-top: 1px solid {BORDER_COLOR};")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(16, 10, 16, 12)
+
+        btn_create = QPushButton("Snapshot Olustur")
+        btn_create.setObjectName("accentButton")
+        btn_create.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_create.clicked.connect(self.on_create)
+        layout.addWidget(btn_create)
+
+        btn_delete = QPushButton("Seciliyi Sil")
+        btn_delete.setObjectName("dangerButton")
+        btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_delete.clicked.connect(self.on_delete)
+        layout.addWidget(btn_delete)
+
+        layout.addStretch()
+
+        btn_refresh = QPushButton("Yenile")
+        btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_refresh.clicked.connect(self.refresh_snapshots)
+        layout.addWidget(btn_refresh)
+
+        btn_close = QPushButton("Kapat")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.clicked.connect(self.close)
+        layout.addWidget(btn_close)
+
+        return widget
+
+    def _init_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self.tray_icon = QSystemTrayIcon(self)
+        tray_menu = QMenu()
+        show_action = QAction("Goster", self)
+        show_action.triggered.connect(self._show_from_tray)
+        quit_action = QAction("Cikis", self)
+        quit_action.triggered.connect(QApplication.quit)
+        tray_menu.addAction(show_action)
+        tray_menu.addAction(quit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.activateWindow()
+
+    def _tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_from_tray()
+
+    def _on_setting_changed(self):
+        self.settings["pre_update_snapshot"] = self.cb_pre_update.isChecked()
+        self.settings["boot_snapshot_90s"] = self.cb_boot_90s.isChecked()
+        save_settings(self.settings)
+
+        timer_active = self.settings["boot_snapshot_90s"]
+        subprocess.run(
+            ["pkexec", "systemctl", "enable" if timer_active else "disable",
+             "hiroki-boot-snapshot.timer"],
+            capture_output=True, timeout=10
+        )
+
+    def refresh_snapshots(self):
+        self.status_label.setText("Snapshot'lar yukleniyor...")
+        self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 2px 0;")
+        self.worker = SnapshotWorker()
+        self.worker.list_done.connect(self._on_list_done)
+        self.worker.list_error.connect(self._on_list_error)
+        self.worker.start()
+
+    def _on_list_done(self, snaps):
+        self.snapshots = snaps
+        self._populate_table()
+        if snaps:
+            self.status_label.setText(f"{len(snaps)} snapshot mevcut.")
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 2px 0;")
+        else:
+            self.status_label.setText("Henuz snapshot yok. 'Snapshot Olustur' ile baslayabilirsiniz.")
+            self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 2px 0;")
+
+    def _on_list_error(self, msg):
+        self.status_label.setText(f"Hata: {msg}")
+        self.status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 12px; padding: 2px 0;")
+        self.table.setRowCount(0)
+
+    def _populate_table(self):
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+
+        if not self.snapshots:
+            self.table.setRowCount(1)
+            empty = QTableWidgetItem("Snapshot bulunamadi.")
+            empty.setForeground(QColor(TEXT_SECONDARY))
+            empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(0, 0, empty)
+            self.table.setItem(0, 1, QTableWidgetItem(""))
+            self.table.setItem(0, 2, QTableWidgetItem(""))
+            self.table.setSpan(0, 0, 1, 3)
+            self.table.setSortingEnabled(True)
+            return
+
+        self.table.setRowCount(len(self.snapshots))
+        for row, snap_line in enumerate(self.snapshots):
+            parts = snap_line.split()
+            snap_id = parts[0] if parts else snap_line
+            date_str = " ".join(parts[1:3]) if len(parts) >= 3 else ""
+            desc = " ".join(parts[3:]) if len(parts) > 3 else ""
+
+            id_item = QTableWidgetItem(snap_id)
+            id_item.setFont(QFont("Monospace", 11, QFont.Weight.Bold))
+            id_item.setForeground(QColor(ACCENT))
+            self.table.setItem(row, 0, id_item)
+
+            date_item = QTableWidgetItem(date_str)
+            date_item.setForeground(QColor(TEXT_SECONDARY))
+            self.table.setItem(row, 1, date_item)
+
+            desc_item = QTableWidgetItem(desc)
+            desc_item.setForeground(QColor(TEXT_PRIMARY))
+            self.table.setItem(row, 2, desc_item)
+
+            bg = QColor(BG_ROW) if row % 2 == 0 else QColor(BG_ROW_ALT)
+            for col in range(3):
+                item = self.table.item(row, col)
+                if item:
+                    item.setBackground(bg)
+
+        self.table.setSortingEnabled(True)
+
+    def on_create(self):
+        if self.create_worker and self.create_worker.isRunning():
+            return
+        self.create_worker = SnapshotCreateWorker()
+        self.create_worker.done.connect(self._on_create_done)
+        self.create_worker.start()
+        self.status_label.setText("Snapshot olusturuluyor...")
+        self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 2px 0;")
+
+    def _on_create_done(self, success, msg):
+        if success:
+            self.status_label.setText(msg)
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 2px 0;")
+            self.refresh_snapshots()
+        else:
+            self.status_label.setText(f"Hata: {msg}")
+            self.status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 12px; padding: 2px 0;")
+
+    def on_delete(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.snapshots):
+            QMessageBox.warning(self, "Uyari", "Silinecek bir snapshot secin.")
+            return
+
+        snap_id = self.snapshots[row].split()[0]
+        reply = QMessageBox.question(
+            self,
+            "Snapshot Sil",
+            f"'{snap_id}' snapshot'i silinecek.\nBu islem geri alinamaz. Devam edilsin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.delete_worker = SnapshotDeleteWorker(snap_id)
+        self.delete_worker.done.connect(self._on_delete_done)
+        self.delete_worker.start()
+        self.status_label.setText(f"{snap_id} siliniyor...")
+        self.status_label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: 12px; padding: 2px 0;")
+
+    def _on_delete_done(self, success, msg):
+        if success:
+            self.status_label.setText(msg)
+            self.status_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 12px; padding: 2px 0;")
+            self.refresh_snapshots()
+        else:
+            self.status_label.setText(f"Hata: {msg}")
+            self.status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 12px; padding: 2px 0;")
+
+    def closeEvent(self, event):
+        if self.tray_icon:
+            self.tray_icon.hide()
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Hiroki Snapshot Yoneticisi")
+    app.setStyle("Fusion")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_MAIN))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_ROW))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_CARD))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#1e1e1e"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+
+    window = HirokiSnapshotWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

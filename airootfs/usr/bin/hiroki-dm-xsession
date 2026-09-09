@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Hiroki OS - Display Manager oturum akışı (xinit client'ı olarak çalışır).
+# Bu script, X sunucusunun "client" tarafıdır; root yetkisiyle çalışır.
+#
+# Akış:
+#   1) Yerel kullanıcıların bu X sunucusuna bağlanmasına izin ver (xhost).
+#   2) AUTO_LOGIN=yes ise DEFAULT_USER için doğrudan oturum başlat.
+#   3) Değilse GTK karşılama ekranını (hiroki-dm-greeter) göster; kullanıcı
+#      giriş yapınca onun oturumunu başlat.
+#   4) Oturum kapanınca script sonlanır -> xinit X'i kapatır -> systemd yeniden başlatır.
+set -euo pipefail
+
+CONF="/etc/hiroki/hiroki-dm.conf"
+RUN="/run/hiroki"
+INFO="$RUN/login.info"
+
+# --- varsayılanlar ---
+AUTO_LOGIN="no"
+DEFAULT_USER="hiroki"
+SESSION=""
+KILL_TIMEOUT="40"
+
+readkv() {
+    local k="$1" v
+    v=$(grep -E "^${k}=" "$CONF" 2>/dev/null | tail -1 | cut -d= -f2-)
+    v=$(printf '%s' "$v" | sed 's/\r$//; s/^"//; s/"$//; s/^ *//; s/ *$//')
+    printf '%s' "$v"
+}
+
+if [[ -r "$CONF" ]]; then
+    AUTO_LOGIN="$(readkv AUTO_LOGIN)"; AUTO_LOGIN="${AUTO_LOGIN:-no}"
+    DEFAULT_USER="$(readkv DEFAULT_USER)"; DEFAULT_USER="${DEFAULT_USER:-hiroki}"
+    SESSION="$(readkv SESSION)"
+    K="$(readkv KILL_TIMEOUT)"; [[ -n "$K" ]] && KILL_TIMEOUT="$K"
+fi
+
+log() { echo "[hiroki-dm] $*"; }
+user_exists() { getent passwd "$1" >/dev/null 2>&1; }
+
+read_selected_de() {
+    local de
+    if [[ -n "${SESSION:-}" ]]; then printf '%s' "$SESSION"; return; fi
+    if [[ -r /etc/hiroki/selected-de ]]; then
+        de=$(tr -d '[:space:]' < /etc/hiroki/selected-de)
+        [[ -n "$de" ]] && { printf '%s' "$de"; return; }
+    fi
+    printf '%s' "xfce"
+}
+
+mkdir -p "$RUN" 2>/dev/null || true
+chmod 1777 "$RUN" 2>/dev/null || true
+
+# Yerel kullanıcıların (kurulu oturum) bu X sunucusuna bağlanmasını sağla.
+# X sunucusu root'a ait; kullanıcı oturumu da buna bağlanır.
+xhost +local: >/dev/null 2>&1 || true
+
+# --- kullanıcı oturumunu başlat (su ile kullanıcıya düş) ---
+start_user_session() {
+    local user="$1" de="$2"
+    local uid
+    uid=$(id -u "$user" 2>/dev/null) || uid=""
+    if [[ -n "$uid" ]]; then
+        mkdir -p "/run/user/$uid" 2>/dev/null || true
+        chown "$user" "/run/user/$uid" 2>/dev/null || chown "$uid:$uid" "/run/user/$uid" 2>/dev/null || true
+        chmod 700 "/run/user/$uid" 2>/dev/null || true
+    fi
+    log "Oturum başlatılıyor: $user ($de)"
+    su - "$user" -c \
+        "DISPLAY=${DISPLAY:-} SESSION='$de' HIROKI_DM_SESSION=1 /usr/bin/hiroki-dm-session '$user' '$de'" \
+        || log "Oturum (kod: $?) sonlandı"
+    log "Oturum sona erdi: $user"
+}
+
+# --- ana akış ---
+if [[ "$AUTO_LOGIN" == "yes" ]] && user_exists "$DEFAULT_USER"; then
+    log "Otomatik giriş: $DEFAULT_USER"
+    start_user_session "$DEFAULT_USER" "$(read_selected_de)"
+    exit 0
+fi
+
+# Karşılama ekranı — GTK giriş. Kullanıcı giriş yapınca bilgi dosyasını yazar ve çıkar.
+rm -f "$INFO"
+log "Karşılama ekranı gösteriliyor"
+python3 /usr/bin/hiroki-dm-greeter
+GREETER_RC=$?
+
+user=""
+action="login"
+if [[ -f "$INFO" ]]; then
+    user=$(awk -F= '/^USER=/{print $2}' "$INFO" | tr -d ' ')
+    action=$(awk -F= '/^ACTION=/{print $2}' "$INFO" | tr -d ' ')
+fi
+rm -f "$INFO"
+
+case "$action" in
+    shutdown)
+        log "Kapatma istendi"
+        systemctl poweroff 2>/dev/null || true
+        ;;
+    reboot)
+        log "Yeniden başlatma istendi"
+        systemctl reboot 2>/dev/null || true
+        ;;
+    login)
+        if [[ -n "$user" ]] && user_exists "$user"; then
+            start_user_session "$user" "$(read_selected_de)"
+        else
+            log "Geçerli kullanıcı yok: '$user'"
+        fi
+        ;;
+    *)
+        # kullanıcı iptal etti -> yeni karşılama için çık (systemd yeniden başlatır)
+        log "Giriş yapılmadı (rc=$GREETER_RC)"
+        ;;
+esac
+
+exit 0
