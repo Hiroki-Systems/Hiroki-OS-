@@ -14,13 +14,6 @@
 ## ✨ Özellikler
 
 - **Arch Tabanlı & Rolling Release** — En güncel paketler, AUR hazır (yay/paru)
-- **Akıllı Masaüstü Seçici (hiroki-de-selector)** — RAM, CPU, GPU ve sanal makineyi algılar, 10 ortamdan en uygununu önerir ama seçim tamamen serbest
-- **10 Masaüstü / Pencere Yöneticisi:**
-  - `XFCE` (live varsayılan, dengeli)
-  - `KDE Plasma` (tam özellikli, 4GB+ önerilir)
-  - `GNOME` (modern, Wayland)
-  - `Cinnamon`, `MATE`, `Budgie`, `LXQt`
-  - `i3wm`, `Openbox`, `Hyprland` (Wayland tiling)
 - **Hiroki Tasarım Dili:**
   - Renkler: `#2D1B69` (koyu mor), `#E91E8C` (pembe), `#00D4AA` (turkuaz), `#0D0D1A` / `#1A1A2E` (koyu arkaplan)
   - **Hiroki-Dark** GTK2/3 teması (Arc Dark tabanlı)
